@@ -53,6 +53,19 @@ func NewMetrics() *Metrics {
 	return m
 }
 
+// Counter registers (once) and returns a labelled counter.
+func (m *Metrics) Counter(name, help string, labels ...string) *prometheus.CounterVec {
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{Name: name, Help: help}, labels)
+	if err := m.Registry.Register(c); err != nil {
+		var are prometheus.AlreadyRegisteredError
+		if errors.As(err, &are) {
+			return are.ExistingCollector.(*prometheus.CounterVec)
+		}
+		panic(err)
+	}
+	return c
+}
+
 func StatusOf(err error) string {
 	if err == nil {
 		return "ok"

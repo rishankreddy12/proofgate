@@ -13,7 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/budget"
 	"github.com/proofgate/proofgate/internal/config"
@@ -72,7 +74,18 @@ func run(cfgPath string) error {
 	rdb := redis.NewClient(ropt)
 	defer rdb.Close()
 
+	chConn, err := analytics.Open(ctx, os.Getenv("CLICKHOUSE_DSN"))
+	if err != nil {
+		return err
+	}
+	if err := analytics.Migrate(ctx, chConn); err != nil {
+		return err
+	}
 	metrics := telemetry.NewMetrics()
+	usageDropped := metrics.Counter("proofgate_analytics_dropped_total", "Analytics rows dropped because the queue was full.", "table")
+	usage := analytics.NewBatcher("usage_events", 50_000, 5_000, time.Second, analytics.InsertUsage(chConn),
+		func() { usageDropped.WithLabelValues("usage_events").Inc() })
+
 	breakers := router.NewBreakers(5, 30*time.Second, time.Now)
 	rt, err := server.BuildRuntime(cfg, breakers, os.Getenv)
 	if err != nil {
@@ -87,12 +100,16 @@ func run(cfgPath string) error {
 	pipe := pipeline.New(
 		metrics.Stage(),
 		telemetry.TraceStage(),
+		analytics.UsageStage(usage.Emit),
 		ratelimit.NewStage(limiter, cfg.Defaults.MaxTokensReserve, cfg.Defaults.DefaultMaxTokens, metrics.FailOpen.Inc),
 		budget.NewStage(ledger, time.Now),
 	)
 	h := &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now,
 		OnEmbed: func(ev server.EmbedEvent) {
 			metrics.ObserveEmbed(ev.Route, ev.Target, telemetry.StatusOf(ev.Err), ev.Tokens, ev.CostMicros, ev.Duration)
+			usage.Emit(analytics.UsageEvent{TS: time.Now().Add(-ev.Duration), RequestID: uuid.NewString(), TenantID: ev.Principal.TenantID,
+				KeyID: ev.Principal.KeyID, Route: ev.Route, Target: ev.Target, Kind: "embeddings", Status: telemetry.StatusOf(ev.Err),
+				Cache: "none", PromptTokens: uint32(ev.Tokens), CostMicros: ev.CostMicros, LatencyMs: uint32(ev.Duration.Milliseconds())})
 		}}
 	authMW := auth.NewMiddleware(st, 30*time.Second, 5*time.Second)
 
@@ -170,5 +187,6 @@ func run(cfgPath string) error {
 	if err := public.Shutdown(sctx); err != nil {
 		slog.Warn("drain timed out", "err", err)
 	}
+	_ = usage.Close(sctx)
 	return shutdownTracing(sctx)
 }
