@@ -1,0 +1,14 @@
+{
+  "actual_usd": 0.013043799999999994,
+  "cheap_count": 17,
+  "cheap_share_pct": 42.5,
+  "counterfactual_usd": 0.021484999999999997,
+  "dollars_saved_usd": 0.008441200000000003,
+  "percent_saved": 39.29,
+  "quality_delta_ci_high": 0.0006,
+  "quality_delta_ci_low": -0.002,
+  "quality_delta_mean": -0.0007,
+  "quality_verified": true,
+  "strong_count": 23,
+  "total_queries": 40
+}
