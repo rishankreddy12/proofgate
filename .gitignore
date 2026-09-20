@@ -3,3 +3,4 @@ bin/
 *.log
 coverage.out
 bench/tmp/
+*.exe
