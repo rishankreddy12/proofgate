@@ -13,3 +13,4 @@ Every third-party module must be listed here with a reason. CI does not check th
 | github.com/google/uuid | Request and entity ids |
 | github.com/stretchr/testify | Test assertions only |
 | github.com/testcontainers/testcontainers-go | Integration tests only |
+| github.com/ClickHouse/clickhouse-go/v2 | native-protocol batch inserts |
