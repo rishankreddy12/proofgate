@@ -3,4 +3,5 @@ bin/
 *.log
 coverage.out
 bench/tmp/
+bench/datasets/*.jsonl
 *.exe
