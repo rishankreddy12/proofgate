@@ -25,7 +25,16 @@ func die(format string, a ...any) {
 
 func main() {
 	if len(os.Args) < 3 {
-		die("usage: proofgatectl <tenant|key> <command> [flags]")
+		die("usage: proofgatectl <tenant|key|label> <command> [flags]")
+	}
+	if os.Args[1] == "label" && os.Args[2] == "cache" {
+		fs := flag.NewFlagSet("label cache", flag.ExitOnError)
+		route := fs.String("route", "", "route name (empty = all)")
+		limit := fs.Int("limit", 20, "max records to label")
+		chURL := fs.String("ch", "", "clickhouse connection URL")
+		_ = fs.Parse(os.Args[3:])
+		runLabelCache(context.Background(), *route, *limit, *chURL)
+		return
 	}
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
