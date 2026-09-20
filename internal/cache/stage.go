@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/pipeline"
 )
@@ -22,6 +23,28 @@ type SemanticStore interface {
 	Nearest(ctx context.Context, tenantID, scope string, emb []float32) (*Match, error)
 }
 
+type Candidate struct {
+	Query           string
+	CandidateQuery  string
+	CandidateAnswer string
+	Similarity      float64
+	Source          string // "exact" | "approx"
+}
+
+type ShadowRecord struct {
+	ID              string
+	TS              time.Time
+	TenantID        string
+	Route           string
+	Threshold       float64
+	Similarity      float64
+	Query           string
+	CandidateQuery  string
+	CandidateAnswer string
+	ActualAnswer    string
+	CandidateSource string
+}
+
 // State is what the stage learned in Before. Plan 3's shadow recorder reads it.
 type State struct {
 	Plan      Plan
@@ -31,19 +54,21 @@ type State struct {
 	Embedding []float32
 	Tags      []string
 	Nearest   *Match // best semantic candidate, even when below threshold
+	Candidate *Candidate
 }
 
 const StateKey = "cache.state"
 
 type Stage struct {
-	exact  ExactStore
-	sem    SemanticStore
-	emb    Embedder
-	now    func() time.Time
-	slots  chan struct{}
-	wg     sync.WaitGroup
-	onErr  func(op string)
-	onDrop func()
+	exact    ExactStore
+	sem      SemanticStore
+	emb      Embedder
+	now      func() time.Time
+	slots    chan struct{}
+	wg       sync.WaitGroup
+	onErr    func(op string)
+	onDrop   func()
+	onShadow func(ShadowRecord)
 }
 
 func NewStage(x ExactStore, s SemanticStore, e Embedder, onErr func(op string), onDrop func()) *Stage {
@@ -53,7 +78,23 @@ func NewStage(x ExactStore, s SemanticStore, e Embedder, onErr func(op string), 
 	if onDrop == nil {
 		onDrop = func() {}
 	}
-	return &Stage{exact: x, sem: s, emb: e, now: time.Now, slots: make(chan struct{}, 64), onErr: onErr, onDrop: onDrop}
+	return &Stage{
+		exact:    x,
+		sem:      s,
+		emb:      e,
+		now:      time.Now,
+		slots:    make(chan struct{}, 64),
+		onErr:    onErr,
+		onDrop:   onDrop,
+		onShadow: func(ShadowRecord) {},
+	}
+}
+
+func (s *Stage) SetOnShadow(fn func(ShadowRecord)) {
+	if fn == nil {
+		fn = func(ShadowRecord) {}
+	}
+	s.onShadow = fn
 }
 
 func (s *Stage) Name() string { return "cache" }
@@ -92,7 +133,12 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 		return false, nil
 	}
 	tenant := c.Principal.TenantID
-	st := &State{Plan: plan, Scope: Scope(tenant, c.Route.Name, c.Request, cfg), Tags: ParseTags(hdr.Get("X-ProofGate-Cache-Tags"))}
+	st := &State{
+		Plan:  plan,
+		Scope: Scope(tenant, c.Route.Name, c.Request, cfg),
+		Query: SemanticText(c.Request),
+		Tags:  ParseTags(hdr.Get("X-ProofGate-Cache-Tags")),
+	}
 	c.Values[StateKey] = st
 
 	if plan.Exact && s.exact != nil {
@@ -101,12 +147,29 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 		if err != nil {
 			s.onErr("exact_get")
 		} else if e != nil {
-			s.hit(c, e, "hit-exact", 1)
-			return true, nil
+			if cfg.Mode == "shadow" {
+				var ans string
+				if e.Response != nil && len(e.Response.Choices) > 0 {
+					ans = e.Response.Choices[0].Message.Content.PlainText()
+				}
+				candQuery := e.Query
+				if candQuery == "" {
+					candQuery = st.Query
+				}
+				st.Candidate = &Candidate{
+					Query:           st.Query,
+					CandidateQuery:  candQuery,
+					CandidateAnswer: ans,
+					Similarity:      1.0,
+					Source:          "exact",
+				}
+			} else {
+				s.hit(c, e, "hit-exact", 1)
+				return true, nil
+			}
 		}
 	}
 	if plan.Semantic && s.sem != nil && s.emb != nil {
-		st.Query = SemanticText(c.Request)
 		v, err := s.emb.Embed(ctx, cfg.EmbeddingRoute, tenant, st.Query)
 		if err != nil {
 			s.onErr("embed")
@@ -119,9 +182,25 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 			return false, nil
 		}
 		st.Nearest = m
-		if m != nil && m.Similarity >= cfg.Threshold && cfg.Mode == "on" {
-			s.hit(c, &m.Entry, "hit-semantic", m.Similarity)
-			return true, nil
+		if m != nil {
+			if cfg.Mode == "shadow" {
+				if st.Candidate == nil && (m.Similarity >= cfg.Threshold || m.Similarity >= 0.70) {
+					var ans string
+					if m.Entry.Response != nil && len(m.Entry.Response.Choices) > 0 {
+						ans = m.Entry.Response.Choices[0].Message.Content.PlainText()
+					}
+					st.Candidate = &Candidate{
+						Query:           st.Query,
+						CandidateQuery:  m.Entry.Query,
+						CandidateAnswer: ans,
+						Similarity:      m.Similarity,
+						Source:          "approx",
+					}
+				}
+			} else if m.Similarity >= cfg.Threshold && cfg.Mode == "on" {
+				s.hit(c, &m.Entry, "hit-semantic", m.Similarity)
+				return true, nil
+			}
 		}
 	}
 	return false, nil
@@ -137,7 +216,26 @@ func storable(r *api.ChatResponse) bool {
 
 func (s *Stage) After(_ context.Context, c *pipeline.Call) {
 	st, ok := c.Values[StateKey].(*State)
-	if !ok || c.CacheStatus != "miss" || c.Err != nil || !storable(c.Response) {
+	if !ok || c.Err != nil {
+		return
+	}
+	if st.Candidate != nil && c.Response != nil && len(c.Response.Choices) > 0 && s.onShadow != nil {
+		actual := c.Response.Choices[0].Message.Content.PlainText()
+		s.onShadow(ShadowRecord{
+			ID:              uuid.NewString(),
+			TS:              s.now(),
+			TenantID:        c.Principal.TenantID,
+			Route:           c.Route.Name,
+			Threshold:       c.Route.Cache.Threshold,
+			Similarity:      st.Candidate.Similarity,
+			Query:           st.Candidate.Query,
+			CandidateQuery:  st.Candidate.CandidateQuery,
+			CandidateAnswer: st.Candidate.CandidateAnswer,
+			ActualAnswer:    actual,
+			CandidateSource: st.Candidate.Source,
+		})
+	}
+	if c.CacheStatus != "miss" || !storable(c.Response) {
 		return
 	}
 	cfg := c.Route.Cache

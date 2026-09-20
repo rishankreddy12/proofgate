@@ -221,3 +221,88 @@ func (b *blockingExact) Put(ctx context.Context, t, k string, e Entry, ttl time.
 	<-b.block
 	return b.memExact.Put(ctx, t, k, e, ttl)
 }
+
+func TestCacheStage_ShadowMode(t *testing.T) {
+	x, sem := &memExact{m: map[string]Entry{}}, &memSem{}
+	s := NewStage(x, sem, hashEmb, nil, nil)
+	ctx := context.Background()
+
+	var emitted []ShadowRecord
+	var mu sync.Mutex
+	s.SetOnShadow(func(r ShadowRecord) {
+		mu.Lock()
+		defer mu.Unlock()
+		emitted = append(emitted, r)
+	})
+
+	// 1. Prime cache with initial entry in "on" mode
+	c1 := newCall("how do I reset my password", route(semOn))
+	_, _ = s.Before(ctx, c1)
+	answer(c1, "Settings > Security", "stop")
+	s.After(ctx, c1)
+	s.Wait()
+
+	// 2. Query in shadow mode with semantically similar prompt
+	shadowRoute := config.CacheConfig{
+		Mode:           "shadow",
+		Exact:          true,
+		Semantic:       true,
+		Threshold:      0.8,
+		TTL:            time.Hour,
+		Version:        1,
+		EmbeddingRoute: "embed",
+		MaxEntryBytes:  1 << 16,
+	}
+
+	c2 := newCall("how can I reset my password", route(shadowRoute))
+	handled, err := s.Before(ctx, c2)
+	require.NoError(t, err)
+	require.False(t, handled, "upstream must be called even when match exists above threshold")
+	require.Equal(t, "miss", c2.CacheStatus)
+
+	// Upstream responds
+	answer(c2, "Go to Settings and click Password Reset", "stop")
+	s.After(ctx, c2)
+	s.Wait()
+
+	mu.Lock()
+	require.Len(t, emitted, 1, "shadow record must be emitted")
+	r := emitted[0]
+	mu.Unlock()
+
+	require.Equal(t, "how can I reset my password", r.Query)
+	require.Equal(t, "how do I reset my password", r.CandidateQuery)
+	require.Equal(t, "Settings > Security", r.CandidateAnswer)
+	require.Equal(t, "Go to Settings and click Password Reset", r.ActualAnswer)
+	require.Equal(t, "approx", r.CandidateSource)
+	require.GreaterOrEqual(t, r.Similarity, 0.8)
+	require.Equal(t, 0.8, r.Threshold)
+
+	// Assert cache stores the new response too (so knowledge accumulates)
+	sem.mu.Lock()
+	require.Len(t, sem.rows, 2, "semantic store should accumulate knowledge from upstream response")
+	sem.mu.Unlock()
+
+	// 3. Test exact match in shadow mode
+	c3 := newCall("how do I reset my password", route(shadowRoute))
+	handled, err = s.Before(ctx, c3)
+	require.NoError(t, err)
+	require.False(t, handled, "upstream must be called even for exact match in shadow mode")
+
+	answer(c3, "Settings > Security (fresh upstream)", "stop")
+	s.After(ctx, c3)
+	s.Wait()
+
+	mu.Lock()
+	require.Len(t, emitted, 2)
+	rExact := emitted[1]
+	mu.Unlock()
+
+	require.Equal(t, "how do I reset my password", rExact.Query)
+	require.Equal(t, "how do I reset my password", rExact.CandidateQuery)
+	require.Equal(t, "Settings > Security", rExact.CandidateAnswer)
+	require.Equal(t, "Settings > Security (fresh upstream)", rExact.ActualAnswer)
+	require.Equal(t, "exact", rExact.CandidateSource)
+	require.Equal(t, 1.0, rExact.Similarity)
+}
+
