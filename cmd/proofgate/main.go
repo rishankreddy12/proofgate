@@ -18,6 +18,7 @@ import (
 	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/budget"
+	"github.com/proofgate/proofgate/internal/cache"
 	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/ratelimit"
@@ -71,6 +72,7 @@ func run(cfgPath string) error {
 	if err != nil {
 		return err
 	}
+	ropt.Protocol = 2
 	rdb := redis.NewClient(ropt)
 	defer rdb.Close()
 
@@ -96,15 +98,44 @@ func run(cfgPath string) error {
 
 	limiter := ratelimit.NewRedis(rdb)
 	ledger := budget.NewRedisLedger(rdb)
+
+	exact := cache.NewExact(rdb)
+	semantic := cache.NewSemantic(rdb)
+
+	var h *server.Handlers
+	embedFunc := cache.EmbedFunc(func(ctx context.Context, route, tenantID, text string) ([]float32, error) {
+		if h == nil {
+			return nil, errors.New("handlers not initialized")
+		}
+		vecs, _, _, err := h.EmbedInternal(ctx, route, []string{text})
+		if err != nil {
+			return nil, err
+		}
+		if len(vecs) == 0 {
+			return nil, errors.New("empty embedding vector returned")
+		}
+		return vecs[0], nil
+	})
+	embedder := cache.NewLRUEmbedder(embedFunc, 4096)
+
+	cacheErrors := metrics.Counter("proofgate_cache_errors_total", "Cache errors by operation.", "op")
+	cacheDropped := metrics.Counter("proofgate_cache_dropped_total", "Cache write tasks dropped due to worker congestion.")
+
+	cacheStage := cache.NewStage(exact, semantic, embedder,
+		func(op string) { cacheErrors.WithLabelValues(op).Inc() },
+		func() { cacheDropped.WithLabelValues().Inc() },
+	)
+
 	// Order matters: After runs in reverse, so metrics and trace (first) observe the final state (last).
 	pipe := pipeline.New(
 		metrics.Stage(),
 		telemetry.TraceStage(),
 		analytics.UsageStage(usage.Emit),
+		cacheStage,
 		ratelimit.NewStage(limiter, cfg.Defaults.MaxTokensReserve, cfg.Defaults.DefaultMaxTokens, metrics.FailOpen.Inc),
 		budget.NewStage(ledger, time.Now),
 	)
-	h := &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now,
+	h = &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now,
 		OnEmbed: func(ev server.EmbedEvent) {
 			metrics.ObserveEmbed(ev.Route, ev.Target, telemetry.StatusOf(ev.Err), ev.Tokens, ev.CostMicros, ev.Duration)
 			usage.Emit(analytics.UsageEvent{TS: time.Now().Add(-ev.Duration), RequestID: uuid.NewString(), TenantID: ev.Principal.TenantID,
@@ -128,6 +159,7 @@ func run(cfgPath string) error {
 
 	admin := http.NewServeMux()
 	admin.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+	admin.HandleFunc("POST /admin/cache/purge", server.AdminCachePurgeHandler(rdb))
 	admin.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := st.Ping(r.Context()); err != nil {
 			http.Error(w, "postgres: "+err.Error(), 503)
@@ -187,6 +219,7 @@ func run(cfgPath string) error {
 	if err := public.Shutdown(sctx); err != nil {
 		slog.Warn("drain timed out", "err", err)
 	}
+	cacheStage.Wait()
 	_ = usage.Close(sctx)
 	return shutdownTracing(sctx)
 }

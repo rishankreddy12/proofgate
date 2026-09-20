@@ -22,6 +22,21 @@ routes:
     targets:
       - {provider: mock-a, model: mock-small}
       - {provider: mock-b, model: mock-large}
+    cache:
+      mode: on
+      exact: true
+      ttl: 24h
+  - name: faq
+    targets:
+      - {provider: mock-a, model: mock-small}
+      - {provider: mock-b, model: mock-large}
+    cache:
+      mode: on
+      exact: true
+      semantic: true
+      threshold: 0.95
+      embedding_route: embed
+      ttl: 24h
   - name: embed
     embeddings: true
     targets:
