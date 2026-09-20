@@ -78,6 +78,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := pipeline.NewCall(p, req, route)
+	c.Incoming = r.Header
 	ctx := r.Context()
 	handled, err := h.Pipeline.Before(ctx, c)
 	if err == nil && req.Stream {

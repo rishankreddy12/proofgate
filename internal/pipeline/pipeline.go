@@ -31,6 +31,7 @@ type Call struct {
 	UpstreamTime time.Duration // time spent waiting on providers; Latency-UpstreamTime = gateway overhead
 	Err          error
 	Header       http.Header    // extra response headers set by stages
+	Incoming     http.Header    // incoming request headers from the client
 	Values       map[string]any // per-stage scratch space, keys prefixed with the stage name
 	ran          int
 }

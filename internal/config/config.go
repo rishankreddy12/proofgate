@@ -41,6 +41,19 @@ type RetryConfig struct {
 	BaseDelay   time.Duration `yaml:"base_delay"`
 }
 
+type CacheConfig struct {
+	Mode           string        `yaml:"mode"`
+	Exact          bool          `yaml:"-"`
+	ExactRaw       *bool         `yaml:"exact"`
+	Semantic       bool          `yaml:"semantic"`
+	Threshold      float64       `yaml:"threshold"`
+	TTL            time.Duration `yaml:"ttl"`
+	Version        int           `yaml:"version"`
+	EmbeddingRoute string        `yaml:"embedding_route"`
+	PerUser        bool          `yaml:"per_user"`
+	MaxEntryBytes  int           `yaml:"max_entry_bytes"`
+}
+
 type RouteConfig struct {
 	Name              string         `yaml:"name"`
 	Targets           []TargetConfig `yaml:"targets"`
@@ -49,6 +62,7 @@ type RouteConfig struct {
 	Timeout           time.Duration  `yaml:"timeout"`
 	StreamIdleTimeout time.Duration  `yaml:"stream_idle_timeout"`
 	Embeddings        bool           `yaml:"embeddings"` // route serves /v1/embeddings
+	Cache             CacheConfig    `yaml:"cache"`
 }
 
 type Defaults struct {
@@ -116,6 +130,23 @@ func (c *Config) applyDefaults() {
 		if r.StreamIdleTimeout == 0 {
 			r.StreamIdleTimeout = 30 * time.Second
 		}
+		cc := &r.Cache
+		if cc.Mode == "" {
+			cc.Mode = "off"
+		}
+		cc.Exact = cc.ExactRaw == nil || *cc.ExactRaw
+		if cc.Threshold == 0 {
+			cc.Threshold = 0.95
+		}
+		if cc.TTL == 0 {
+			cc.TTL = 24 * time.Hour
+		}
+		if cc.Version == 0 {
+			cc.Version = 1
+		}
+		if cc.MaxEntryBytes == 0 {
+			cc.MaxEntryBytes = 64 << 10
+		}
 	}
 }
 
@@ -143,6 +174,12 @@ func (c *Config) validate() error {
 		}
 	}
 	routes := map[string]bool{}
+	embedRoutes := map[string]bool{}
+	for _, r := range c.Routes {
+		if r.Embeddings {
+			embedRoutes[r.Name] = true
+		}
+	}
 	for _, r := range c.Routes {
 		if r.Name == "" || strings.Contains(r.Name, "/") {
 			errs = append(errs, fmt.Errorf("route name %q must be non-empty and contain no '/'", r.Name))
@@ -167,6 +204,22 @@ func (c *Config) validate() error {
 				if _, ok := c.Pricing[t.Provider+"/"+t.Model]; !ok {
 					errs = append(errs, fmt.Errorf("route %q: strategy cheapest needs pricing for %s/%s", r.Name, t.Provider, t.Model))
 				}
+			}
+		}
+		cc := r.Cache
+		switch cc.Mode {
+		case "off", "on":
+		default:
+			errs = append(errs, fmt.Errorf("route %q: unknown cache mode %q", r.Name, cc.Mode))
+		}
+		if cc.Threshold <= 0 || cc.Threshold > 1 {
+			errs = append(errs, fmt.Errorf("route %q: cache threshold must be in (0, 1]", r.Name))
+		}
+		if cc.Semantic {
+			if cc.EmbeddingRoute == "" {
+				errs = append(errs, fmt.Errorf("route %q: semantic cache needs embedding_route", r.Name))
+			} else if !embedRoutes[cc.EmbeddingRoute] {
+				errs = append(errs, fmt.Errorf("route %q: embedding_route %q must name a route with embeddings: true", r.Name, cc.EmbeddingRoute))
 			}
 		}
 	}
