@@ -54,6 +54,22 @@ type CacheConfig struct {
 	MaxEntryBytes  int           `yaml:"max_entry_bytes"`
 }
 
+type InjectionGuardConfig struct {
+	Enabled   bool    `yaml:"enabled"`
+	Threshold float64 `yaml:"threshold"` // default 0.70
+	Action    string  `yaml:"action"`    // "block" | "warn", default "block"
+}
+
+type PIIGuardConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Mode    string `yaml:"mode"` // "redact" | "mask", default "redact"
+}
+
+type GuardConfig struct {
+	Injection InjectionGuardConfig `yaml:"injection"`
+	PII       PIIGuardConfig       `yaml:"pii"`
+}
+
 type RouteConfig struct {
 	Name              string         `yaml:"name"`
 	Targets           []TargetConfig `yaml:"targets"`
@@ -63,6 +79,7 @@ type RouteConfig struct {
 	StreamIdleTimeout time.Duration  `yaml:"stream_idle_timeout"`
 	Embeddings        bool           `yaml:"embeddings"` // route serves /v1/embeddings
 	Cache             CacheConfig    `yaml:"cache"`
+	Guard             GuardConfig    `yaml:"guard"`
 }
 
 type Defaults struct {

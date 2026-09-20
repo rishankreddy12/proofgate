@@ -22,6 +22,7 @@ import (
 	"github.com/proofgate/proofgate/internal/budget"
 	"github.com/proofgate/proofgate/internal/cache"
 	"github.com/proofgate/proofgate/internal/config"
+	"github.com/proofgate/proofgate/internal/guard"
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/router"
@@ -142,6 +143,7 @@ func run(cfgPath string) error {
 		metrics.Stage(),
 		telemetry.TraceStage(),
 		analytics.UsageStage(usage.Emit),
+		guard.NewStage(),
 		cacheStage,
 		ratelimit.NewStage(limiter, cfg.Defaults.MaxTokensReserve, cfg.Defaults.DefaultMaxTokens, metrics.FailOpen.Inc),
 		budget.NewStage(ledger, time.Now),

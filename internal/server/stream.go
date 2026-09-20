@@ -108,6 +108,10 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 	}
 	writeCallHeaders(w, c)
 	w.Header().Set("Trailer", "X-ProofGate-Cost-USD")
+	var chunkFilter func(*api.ChatChunk) *api.ChatChunk
+	if fn, ok := c.Values["guard.chunk_filter"].(func(*api.ChatChunk) *api.ChatChunk); ok {
+		chunkFilter = fn
+	}
 	var asm api.Assembler
 	clientGone := false
 	for ch := range chunks {
@@ -115,9 +119,20 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 		if usageOnly(ch) && !wantsUsage(c.Request) {
 			continue
 		}
-		if err := sw.Data(ch); err != nil {
+		outCh := ch
+		if chunkFilter != nil {
+			outCh = chunkFilter(ch)
+		}
+		if err := sw.Data(outCh); err != nil {
 			clientGone = true
 			break
+		}
+	}
+	if flushFn, ok := c.Values["guard.stream_flush"].(func() string); ok {
+		if rem := flushFn(); rem != "" && !clientGone {
+			_ = sw.Data(&api.ChatChunk{
+				Choices: []api.ChunkChoice{{Delta: api.ChunkDelta{Content: rem}}},
+			})
 		}
 	}
 	if err := upstreamErr(); err != nil && !clientGone {
