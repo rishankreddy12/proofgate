@@ -1,0 +1,12 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prom
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+  - name: ClickHouse
+    uid: ch
+    type: grafana-clickhouse-datasource
+    jsonData: {host: clickhouse, port: 9000, protocol: native, defaultDatabase: proofgate, username: proofgate}
+    secureJsonData: {password: proofgate}

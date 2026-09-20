@@ -103,11 +103,20 @@ func run(cfgPath string) error {
 	semantic := cache.NewSemantic(rdb)
 
 	var h *server.Handlers
-	embedFunc := cache.EmbedFunc(func(ctx context.Context, route, tenantID, text string) ([]float32, error) {
+	embedFunc := cache.EmbedFunc(func(ctx context.Context, route, tenant, text string) ([]float32, error) {
 		if h == nil {
 			return nil, errors.New("handlers not initialized")
 		}
-		vecs, _, _, err := h.EmbedInternal(ctx, route, []string{text})
+		start := time.Now()
+		vecs, u, target, err := h.EmbedInternal(ctx, route, []string{text})
+		var cost int64
+		if err == nil {
+			cost, _ = state.Load().Pricing.CostMicros(target.String(), u)
+			_ = ledger.Add(context.WithoutCancel(ctx), tenant, budget.Month(time.Now()), cost)
+		}
+		usage.Emit(analytics.UsageEvent{TS: start, RequestID: uuid.NewString(), TenantID: tenant, Route: route,
+			Target: target.String(), Kind: "cache_embed", Status: telemetry.StatusOf(err), Cache: "none",
+			PromptTokens: uint32(u.PromptTokens), CostMicros: cost, LatencyMs: uint32(time.Since(start).Milliseconds())})
 		if err != nil {
 			return nil, err
 		}
@@ -116,7 +125,7 @@ func run(cfgPath string) error {
 		}
 		return vecs[0], nil
 	})
-	embedder := cache.NewLRUEmbedder(embedFunc, 4096)
+	embedder := cache.NewLRUEmbedder(embedFunc, 10_000)
 
 	cacheErrors := metrics.Counter("proofgate_cache_errors_total", "Cache errors by operation.", "op")
 	cacheDropped := metrics.Counter("proofgate_cache_dropped_total", "Cache write tasks dropped due to worker congestion.")

@@ -1,0 +1,16 @@
+{
+  "label": "mock-embeddings threshold=0.90",
+  "dataset": "bench/datasets/qqp-replay.jsonl",
+  "route": "faq",
+  "date": "2026-09-20T18:52:15Z",
+  "requests": 2000,
+  "errors": 0,
+  "phase2_requests": 1000,
+  "hits_exact": 9,
+  "hits_semantic": 57,
+  "hit_rate": 0.066,
+  "wrong_hits": 35,
+  "wrong_hit_rate": 0.5303030303030303,
+  "p50_ms": 9.534,
+  "p99_ms": 19.412
+}

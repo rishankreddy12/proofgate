@@ -4,7 +4,7 @@ x-gateway: &gateway
   environment:
     DATABASE_URL: postgres://proofgate:proofgate@postgres:5432/proofgate?sslmode=disable
     REDIS_URL: redis://redis:6379/0
-    CLICKHOUSE_DSN: clickhouse://clickhouse:9000/proofgate
+    CLICKHOUSE_DSN: clickhouse://proofgate:proofgate@clickhouse:9000/proofgate
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -53,8 +53,8 @@ services:
     image: clickhouse/clickhouse-server:24.8-alpine
     environment:
       CLICKHOUSE_DB: proofgate
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_USER: proofgate
+      CLICKHOUSE_PASSWORD: proofgate
     ports: ["127.0.0.1:19000:9000", "127.0.0.1:18123:8123"]
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8123/ping || exit 1"]
