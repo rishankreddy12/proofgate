@@ -70,16 +70,28 @@ type GuardConfig struct {
 	PII       PIIGuardConfig       `yaml:"pii"`
 }
 
+type SmartRouteConfig struct {
+	Mode                string  `yaml:"mode"` // "off" | "shadow" | "on", default "off"
+	CheapTarget         string  `yaml:"cheap_target"`
+	StrongTarget        string  `yaml:"strong_target"`
+	MaxTokensForCheap   int     `yaml:"max_tokens_for_cheap"` // default 1500
+	KNNEnabled          bool    `yaml:"knn_enabled"`
+	KNNRoute            string  `yaml:"knn_route"`
+	KNNK                int     `yaml:"knn_k"`
+	ConfidenceThreshold float64 `yaml:"confidence_threshold"`
+}
+
 type RouteConfig struct {
-	Name              string         `yaml:"name"`
-	Targets           []TargetConfig `yaml:"targets"`
-	Strategy          string         `yaml:"strategy"`
-	Retry             RetryConfig    `yaml:"retry"`
-	Timeout           time.Duration  `yaml:"timeout"`
-	StreamIdleTimeout time.Duration  `yaml:"stream_idle_timeout"`
-	Embeddings        bool           `yaml:"embeddings"` // route serves /v1/embeddings
-	Cache             CacheConfig    `yaml:"cache"`
-	Guard             GuardConfig    `yaml:"guard"`
+	Name              string           `yaml:"name"`
+	Targets           []TargetConfig   `yaml:"targets"`
+	Strategy          string           `yaml:"strategy"`
+	Retry             RetryConfig      `yaml:"retry"`
+	Timeout           time.Duration    `yaml:"timeout"`
+	StreamIdleTimeout time.Duration    `yaml:"stream_idle_timeout"`
+	Embeddings        bool             `yaml:"embeddings"` // route serves /v1/embeddings
+	Cache             CacheConfig      `yaml:"cache"`
+	Guard             GuardConfig      `yaml:"guard"`
+	SmartRoute        SmartRouteConfig `yaml:"smart_route"`
 }
 
 type Defaults struct {
