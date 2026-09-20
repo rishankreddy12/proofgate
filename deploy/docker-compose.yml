@@ -1,0 +1,48 @@
+name: proofgate
+x-gateway: &gateway
+  build: {context: .., dockerfile: deploy/Dockerfile}
+  environment:
+    DATABASE_URL: postgres://proofgate:proofgate@postgres:5432/proofgate?sslmode=disable
+    REDIS_URL: redis://redis:6379/0
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  volumes:
+    - ./proofgate.yaml:/etc/proofgate/proofgate.yaml:ro
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+    mockllm-a: {condition: service_started}
+    mockllm-b: {condition: service_started}
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/proofgate", "-healthcheck"]
+    interval: 2s
+    retries: 30
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: proofgate, POSTGRES_PASSWORD: proofgate, POSTGRES_DB: proofgate}
+    ports: ["127.0.0.1:15432:5432"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U proofgate"], interval: 2s, retries: 30}
+  redis:
+    image: redis/redis-stack-server:7.4.0-v1
+    ports: ["127.0.0.1:16379:6379"]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 2s, retries: 30}
+  mockllm-a:
+    build: {context: .., dockerfile: deploy/Dockerfile.mockllm}
+    command: ["-name", "a", "-addr", ":8081"]
+    ports: ["127.0.0.1:18081:8081"]
+  mockllm-b:
+    build: {context: .., dockerfile: deploy/Dockerfile.mockllm}
+    command: ["-name", "b", "-addr", ":8081"]
+    ports: ["127.0.0.1:18082:8081"]
+  gateway-1:
+    <<: *gateway
+    ports: ["18080:8080", "127.0.0.1:19090:9090"]
+  gateway-2:
+    <<: *gateway
+    ports: ["18083:8080", "127.0.0.1:19091:9090"]
+  gateway-3:
+    <<: *gateway
+    ports: ["18084:8080", "127.0.0.1:19092:9090"]

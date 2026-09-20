@@ -1,0 +1,174 @@
+// Command proofgate runs the LLM gateway.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"log/slog"
+	"net/http"
+	"net/http/pprof"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/proofgate/proofgate/internal/auth"
+	"github.com/proofgate/proofgate/internal/budget"
+	"github.com/proofgate/proofgate/internal/config"
+	"github.com/proofgate/proofgate/internal/pipeline"
+	"github.com/proofgate/proofgate/internal/ratelimit"
+	"github.com/proofgate/proofgate/internal/router"
+	"github.com/proofgate/proofgate/internal/server"
+	"github.com/proofgate/proofgate/internal/store"
+	"github.com/proofgate/proofgate/internal/telemetry"
+	"github.com/proofgate/proofgate/internal/version"
+	"github.com/redis/go-redis/v9"
+)
+
+func main() {
+	cfgPath := flag.String("config", "/etc/proofgate/proofgate.yaml", "config file")
+	healthcheck := flag.Bool("healthcheck", false, "probe the local /healthz and exit")
+	flag.Parse()
+	if *healthcheck {
+		resp, err := http.Get("http://127.0.0.1:8080/healthz") //nolint:noctx
+		if err != nil || resp.StatusCode != 200 {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	if err := run(*cfgPath); err != nil {
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run(cfgPath string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	shutdownTracing, err := telemetry.SetupTracing(ctx, "proofgate")
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(ctx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		return err
+	}
+	ropt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+	if err != nil {
+		return err
+	}
+	rdb := redis.NewClient(ropt)
+	defer rdb.Close()
+
+	metrics := telemetry.NewMetrics()
+	breakers := router.NewBreakers(5, 30*time.Second, time.Now)
+	rt, err := server.BuildRuntime(cfg, breakers, os.Getenv)
+	if err != nil {
+		return err
+	}
+	state := &server.State{}
+	state.Store(rt)
+
+	limiter := ratelimit.NewRedis(rdb)
+	ledger := budget.NewRedisLedger(rdb)
+	// Order matters: After runs in reverse, so metrics and trace (first) observe the final state (last).
+	pipe := pipeline.New(
+		metrics.Stage(),
+		telemetry.TraceStage(),
+		ratelimit.NewStage(limiter, cfg.Defaults.MaxTokensReserve, cfg.Defaults.DefaultMaxTokens, metrics.FailOpen.Inc),
+		budget.NewStage(ledger, time.Now),
+	)
+	h := &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now,
+		OnEmbed: func(ev server.EmbedEvent) {
+			metrics.ObserveEmbed(ev.Route, ev.Target, telemetry.StatusOf(ev.Err), ev.Tokens, ev.CostMicros, ev.Duration)
+		}}
+	authMW := auth.NewMiddleware(st, 30*time.Second, 5*time.Second)
+
+	watcher := config.NewWatcher(cfgPath, 5*time.Second, func(c *config.Config) {
+		next, err := server.BuildRuntime(c, breakers, os.Getenv)
+		if err != nil {
+			slog.Error("config valid but runtime build failed; keeping previous", "err", err)
+			return
+		}
+		state.Store(next)
+	})
+	go watcher.Run(ctx)
+
+	public := &http.Server{Addr: cfg.Server.Addr, Handler: telemetry.Tracing(telemetry.AccessLog(h.Routes(authMW.Handler))),
+		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+
+	admin := http.NewServeMux()
+	admin.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+	admin.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := st.Ping(r.Context()); err != nil {
+			http.Error(w, "postgres: "+err.Error(), 503)
+			return
+		}
+		if err := rdb.Ping(r.Context()).Err(); err != nil {
+			http.Error(w, "redis: "+err.Error(), 503)
+			return
+		}
+		w.WriteHeader(200)
+	})
+	admin.HandleFunc("POST /admin/reload", func(w http.ResponseWriter, _ *http.Request) {
+		if err := watcher.Reload(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		w.WriteHeader(204)
+	})
+	admin.HandleFunc("GET /debug/pprof/", pprof.Index)
+	admin.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	admin.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+	adminSrv := &http.Server{Addr: cfg.Server.AdminAddr, Handler: admin, ReadHeaderTimeout: 10 * time.Second}
+
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				for _, r := range state.Load().Router.Routes() {
+					for _, tg := range r.Targets {
+						metrics.SetBreaker(tg.String(), breakers.State(tg))
+					}
+				}
+			}
+		}
+	}()
+
+	errc := make(chan error, 2)
+	go func() { errc <- public.ListenAndServe() }()
+	go func() { errc <- adminSrv.ListenAndServe() }()
+	slog.Info("proofgate started", "version", version.Version, "addr", cfg.Server.Addr, "admin", cfg.Server.AdminAddr)
+
+	select {
+	case <-ctx.Done():
+	case err := <-errc:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	}
+	slog.Info("shutting down, draining in-flight requests")
+	sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = adminSrv.Shutdown(sctx)
+	if err := public.Shutdown(sctx); err != nil {
+		slog.Warn("drain timed out", "err", err)
+	}
+	return shutdownTracing(sctx)
+}
