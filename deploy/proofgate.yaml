@@ -1,0 +1,28 @@
+# Example configuration. Model ids and prices are examples: copy current values from each provider's
+# pricing page before using this for cost numbers. Prices are USD per 1M tokens.
+server:
+  addr: ":8080"
+  admin_addr: "0.0.0.0:9090"   # inside the container only; do not publish this port publicly
+
+providers:
+  - {name: mock-a, type: openai, base_url: "http://mockllm-a:8081/v1"}
+  - {name: mock-b, type: openai, base_url: "http://mockllm-b:8081/v1"}
+  - {name: openai, type: openai, base_url: "https://api.openai.com/v1", api_key_env: OPENAI_API_KEY}
+  - {name: anthropic, type: anthropic, base_url: "https://api.anthropic.com", api_key_env: ANTHROPIC_API_KEY}
+  - {name: gemini, type: gemini, base_url: "https://generativelanguage.googleapis.com", api_key_env: GEMINI_API_KEY}
+  - {name: ollama, type: openai, base_url: "http://ollama:11434/v1"}
+
+pricing:
+  mock-a/mock-small:   {input: 0.10, output: 0.40}
+  mock-b/mock-large:   {input: 1.00, output: 4.00}
+  mock-a/mock-embed:   {input: 0.02, output: 0}
+
+routes:
+  - name: default
+    targets:
+      - {provider: mock-a, model: mock-small}
+      - {provider: mock-b, model: mock-large}
+  - name: embed
+    embeddings: true
+    targets:
+      - {provider: mock-a, model: mock-embed}

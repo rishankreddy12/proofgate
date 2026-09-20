@@ -1,0 +1,23 @@
+providers:
+  - name: mock-a
+    type: openai
+    base_url: http://localhost:8081/v1
+  - name: anthropic
+    type: anthropic
+    base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+pricing:
+  mock-a/mock-small: {input: 0.10, output: 0.40}
+  anthropic/claude-haiku-4-5: {input: 1.00, output: 5.00, cached_input: 0.10}
+routes:
+  - name: default
+    targets:
+      - {provider: mock-a, model: mock-small}
+      - {provider: anthropic, model: claude-haiku-4-5}
+  - name: cheap
+    strategy: cheapest
+    retry: {max_attempts: 3, base_delay: 50ms}
+    timeout: 10s
+    targets:
+      - {provider: anthropic, model: claude-haiku-4-5}
+      - {provider: mock-a, model: mock-small}
