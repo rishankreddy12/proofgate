@@ -26,3 +26,4 @@ down:
 
 e2e: up
 	go test -race -tags e2e -count=1 ./e2e/...
+	bash scripts/sdk_smoke.sh
