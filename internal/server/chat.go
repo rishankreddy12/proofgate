@@ -104,9 +104,6 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	h.Pipeline.After(ctx, c)
 }
 
-func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runtime, c *pipeline.Call, handled bool) {
-	api.WriteError(w, api.BadRequest("streaming arrives in Task 17"))
-}
 func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotImplemented) }
 func (h *Handlers) Models(w http.ResponseWriter, r *http.Request)     { w.WriteHeader(http.StatusNotImplemented) }
 
