@@ -103,8 +103,3 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Pipeline.After(ctx, c)
 }
-
-func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotImplemented) }
-func (h *Handlers) Models(w http.ResponseWriter, r *http.Request)     { w.WriteHeader(http.StatusNotImplemented) }
-
-type EmbedEvent struct{}
