@@ -70,8 +70,8 @@ go run ./cmd/proofgatectl key create --tenant production --name prod-app
 go run ./cmd/proofgatectl label cache --route default --count 20
 
 # Run offline calibration sweeps
-go run ./cmd/cacheeval -pairs testdata/qqp_sample.json -output bench/results/cache_curve.json
-go run ./cmd/routeeval -queries testdata/sample_queries.json -output bench/results/routing_eval.json
+go run ./cmd/cacheeval -dataset bench/datasets/qqp-replay.jsonl -n 500 -output bench/results/cache_curve.json
+go run ./cmd/routeeval -output bench/results/routing_eval.json
 ```
 
 ## Cache invalidation
