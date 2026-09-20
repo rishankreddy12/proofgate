@@ -1,0 +1,7 @@
+run:
+  timeout: 5m
+linters:
+  enable: [errcheck, govet, staticcheck, unused, gosec, bodyclose, noctx, contextcheck, errorlint]
+linters-settings:
+  gosec:
+    excludes: [G104]
