@@ -208,7 +208,7 @@ func (c *Config) validate() error {
 		}
 		cc := r.Cache
 		switch cc.Mode {
-		case "off", "on":
+		case "off", "on", "shadow":
 		default:
 			errs = append(errs, fmt.Errorf("route %q: unknown cache mode %q", r.Name, cc.Mode))
 		}

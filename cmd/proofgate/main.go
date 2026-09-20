@@ -10,6 +10,8 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"reflect"
+	"sync"
 	"syscall"
 	"time"
 
@@ -153,15 +155,43 @@ func run(cfgPath string) error {
 		}}
 	authMW := auth.NewMiddleware(st, 30*time.Second, 5*time.Second)
 
-	watcher := config.NewWatcher(cfgPath, 5*time.Second, func(c *config.Config) {
-		next, err := server.BuildRuntime(c, breakers, os.Getenv)
+	var (
+		rtMu    sync.Mutex
+		fileCfg = cfg
+		lastOvs []store.Override
+	)
+	rebuild := func() {
+		rtMu.Lock()
+		defer rtMu.Unlock()
+		merged, errs := server.ApplyOverrides(fileCfg, lastOvs)
+		for _, e := range errs {
+			slog.Warn("override ignored", "err", e)
+		}
+		next, err := server.BuildRuntime(merged, breakers, os.Getenv)
 		if err != nil {
-			slog.Error("config valid but runtime build failed; keeping previous", "err", err)
+			slog.Error("runtime rebuild failed; keeping previous", "err", err)
 			return
 		}
 		state.Store(next)
+	}
+
+	watcher := config.NewWatcher(cfgPath, 5*time.Second, func(c *config.Config) {
+		rtMu.Lock()
+		fileCfg = c
+		rtMu.Unlock()
+		rebuild()
 	})
 	go watcher.Run(ctx)
+
+	go server.PollOverrides(ctx, st, 10*time.Second, func(ovs []store.Override) {
+		rtMu.Lock()
+		changed := !reflect.DeepEqual(ovs, lastOvs)
+		lastOvs = ovs
+		rtMu.Unlock()
+		if changed {
+			rebuild()
+		}
+	})
 
 	public := &http.Server{Addr: cfg.Server.Addr, Handler: telemetry.Tracing(telemetry.AccessLog(h.Routes(authMW.Handler))),
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
