@@ -33,8 +33,12 @@ func clampU32(d int64) uint32 {
 }
 
 func EventFromCall(c *pipeline.Call) UsageEvent {
+	kind := "chat"
+	if k, ok := c.Values["usage.kind"].(string); ok && k != "" {
+		kind = k
+	}
 	e := UsageEvent{TS: c.Start, RequestID: c.ID, TenantID: c.Principal.TenantID, KeyID: c.Principal.KeyID,
-		Kind: "chat", Status: telemetry.StatusOf(c.Err), Cache: c.CacheStatus, Stream: c.Stream,
+		Kind: kind, Status: telemetry.StatusOf(c.Err), Cache: c.CacheStatus, Stream: c.Stream,
 		Attempts: uint8(min(c.Attempts, 255)), PromptTokens: clampU32(int64(c.Usage.PromptTokens)),
 		CompletionTokens: clampU32(int64(c.Usage.CompletionTokens)), CachedTokens: clampU32(int64(c.Usage.CachedTokens())),
 		CostMicros: c.CostMicros, LatencyMs: clampU32(c.Latency.Milliseconds()), TTFTMs: clampU32(c.TTFT.Milliseconds())}

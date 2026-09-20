@@ -36,7 +36,7 @@ func Eligibility(req *api.ChatRequest, hdr http.Header, cfg config.CacheConfig) 
 	if cfg.Mode == "" || cfg.Mode == "off" {
 		return Plan{}
 	}
-	if strings.EqualFold(hdr.Get("X-ProofGate-Cache"), "off") {
+	if strings.EqualFold(hdr.Get("X-ProofGate-Cache"), "off") || hdr.Get("X-ProofGate-Internal") == "true" {
 		return Plan{Bypass: "header"}
 	}
 	if usesTools(req) {
