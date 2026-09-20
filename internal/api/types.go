@@ -56,6 +56,13 @@ type ChatRequest struct {
 	ResponseFormat      json.RawMessage `json:"response_format,omitempty"`
 	Seed                *int            `json:"seed,omitempty"`
 	User                string          `json:"user,omitempty"`
+	N                   *int            `json:"n,omitempty"`
+	PresencePenalty     *float64        `json:"presence_penalty,omitempty"`
+	FrequencyPenalty    *float64        `json:"frequency_penalty,omitempty"`
+	ParallelToolCalls   *bool           `json:"parallel_tool_calls,omitempty"`
+	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
+	Logprobs            *bool           `json:"logprobs,omitempty"`
+	TopLogprobs         *int            `json:"top_logprobs,omitempty"`
 }
 
 type PromptTokensDetails struct {
