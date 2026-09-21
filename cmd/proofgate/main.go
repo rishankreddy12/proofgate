@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/proofgate/proofgate/internal/agentrun"
 	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/auth"
@@ -142,11 +143,14 @@ func run(cfgPath string) error {
 		func() { cacheDropped.WithLabelValues().Inc() },
 	)
 
+	runs := agentrun.NewRedisStore(rdb)
+
 	// Order matters: After runs in reverse, so metrics and trace (first) observe the final state (last).
 	pipe := pipeline.New(
 		metrics.Stage(),
 		telemetry.TraceStage(),
 		analytics.UsageStage(usage.Emit),
+		agentrun.NewStage(runs),
 		guard.NewStage(),
 		cacheStage,
 		ratelimit.NewStage(limiter, cfg.Defaults.MaxTokensReserve, cfg.Defaults.DefaultMaxTokens, metrics.FailOpen.Inc),
