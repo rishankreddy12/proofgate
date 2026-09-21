@@ -1,0 +1,91 @@
+- id: T1
+  category: I
+  asset: provider API keys at rest
+  threat: Database dump or backup leak exposes provider keys
+  controls: ["Envelope encryption (AES-256-GCM per-record DEK, KEK outside the database)", "AAD binds ciphertext to provider"]
+  tests: ["internal/secrets/envelope_test.go:TestSealOpenRoundTrip", "internal/secrets/envelope_test.go:TestOpenRejectsTamperingAndSwaps"]
+  residual: An attacker with both the database and the KEK (file or Vault access) can decrypt.
+- id: T2
+  category: I
+  asset: provider API keys in memory
+  threat: Heap dump or core file of a running gateway
+  controls: ["Decrypted keys cached at most 60s", "DEK buffers zeroed after use", "No core dumps in distroless, read-only container"]
+  tests: ["internal/secrets/keycache_test.go:TestKeyCache"]
+  residual: Go strings cannot be wiped; keys used in the last minute may be in memory.
+- id: T3
+  category: I
+  asset: secrets in logs
+  threat: Keys or ProofGate API keys appear in logs, errors or traces
+  controls: ["Scrubbing slog handler", "Access log without headers or bodies", "Panic recovery logs no request data", "Vault errors never echo bodies"]
+  tests: ["internal/telemetry/scrub_test.go:TestScrubber", "internal/telemetry/telemetry_test.go:TestAccessLogKeepsFlusherAndHidesSecrets", "internal/server/recover_test.go:TestRecover"]
+  residual: Third-party libraries logging through other channels.
+- id: T4
+  category: T
+  asset: build and release pipeline
+  threat: Compromised CI action or dependency injects code (LiteLLM, March 2026)
+  controls: ["All actions pinned by commit SHA", "Least-privilege job permissions", "go mod verify + govulncheck", "CODEOWNERS on CI and dependency files"]
+  tests: ["scripts/tests/test_check_pinned_actions.sh"]
+  residual: A malicious commit merged by a maintainer.
+- id: T5
+  category: S
+  asset: published images
+  threat: Attacker publishes a look-alike or tampered image
+  controls: ["Keyless cosign signatures tied to the release workflow identity", "SBOM and SLSA provenance attestations", "No long-lived publish tokens"]
+  tests: [".github/workflows/release.yml"]
+  residual: Users who do not verify signatures.
+- id: T6
+  category: E
+  asset: gateway container
+  threat: Remote code execution escalates inside the container
+  controls: ["Distroless, no shell", "Non-root, read-only root filesystem, all capabilities dropped, no-new-privileges"]
+  tests: ["scripts/check_image.sh"]
+  residual: Kernel exploits.
+- id: T7
+  category: S
+  asset: tenant API access
+  threat: Stolen or guessed ProofGate key
+  controls: ["256-bit random keys, SHA-256 hashed at rest", "Negative cache limits lookup floods", "Route allow-lists per key"]
+  tests: ["internal/auth/middleware_test.go:TestMiddleware", "internal/auth/keys_test.go:TestGenerateKey"]
+  residual: Revocation takes up to 30s per replica.
+- id: T8
+  category: I
+  asset: other tenants' cached answers
+  threat: Cross-tenant cache leak through a semantic match
+  controls: ["Tenant id in every cache scope and as a pre-filter on vector search"]
+  tests: ["internal/cache/semantic_integration_test.go:TestSemanticNearestIsTenantAndScopeIsolated", "internal/cache/keys_test.go:TestScopeSeparatesWhatMatters"]
+  residual: none known
+- id: T9
+  category: T
+  asset: model behaviour and tools
+  threat: Prompt injection through user input or tool output
+  controls: ["Heuristic + optional classifier screening of user and tool messages", "Judge prompts fence data in <data> tags", "MCP tool allow-lists, deny by default"]
+  tests: ["internal/guard/stage_test.go:TestGuardStage_Injection_Block", "internal/mcpproxy/proxy_test.go:TestDeniedCallNeverReachesServer"]
+  residual: Novel injections that evade the heuristic.
+- id: T10
+  category: I
+  asset: MCP credentials
+  threat: Gateway key forwarded to a third-party MCP server
+  controls: ["Proxy never copies the client Authorization header; upstream credentials come from config"]
+  tests: ["internal/mcpproxy/proxy_test.go:TestToolsListIsFilteredJSONAndSSE"]
+  residual: none known
+- id: T11
+  category: D
+  asset: gateway availability and spend
+  threat: Runaway agents or a single tenant exhausting capacity or budget
+  controls: ["Per-tenant RPM/TPM", "Monthly budgets", "Per-run step/cost/token caps and loop detection", "Shadow budget cap"]
+  tests: ["internal/ratelimit/limiter_integration_test.go:TestThreeReplicasShareOneLimit", "internal/agentrun/runs_integration_test.go:TestStepsCostAndLoops", "internal/proof/labeler_test.go:TestCacheLabelWorker_StratifiedBatch"]
+  residual: Budgets can be overshot by in-flight calls.
+- id: T12
+  category: I
+  asset: personal data in prompts
+  threat: PII sent to third-party providers or stored in shadow tables
+  controls: ["PII redaction with checksums before cache, shadow storage and upstream calls", "30-day TTL on shadow text"]
+  tests: ["internal/guard/redact_test.go:TestPII_RedactAndRestore_Unary", "internal/guard/stage_test.go:TestGuardStage_PII_UnaryFlow"]
+  residual: PII types without a detector.
+- id: T13
+  category: R
+  asset: live routing and cache decisions
+  threat: Nobody can tell who or what changed a live threshold or routing mode
+  controls: ["All background changes go through route_overrides with a proof_events audit row"]
+  tests: ["internal/store/overrides_integration_test.go:TestOverrides"]
+  residual: Direct database edits bypass the audit table.
