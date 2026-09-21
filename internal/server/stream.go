@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
+	"github.com/proofgate/proofgate/internal/health"
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/proofgate/proofgate/internal/router"
@@ -27,7 +28,7 @@ func (h *Handlers) openStream(ctx context.Context, rt *Runtime, c *pipeline.Call
 		first  *api.ChatChunk
 		cancel context.CancelFunc
 	)
-	res, err := router.Execute(ctx, rt.Router.Plan(c.Route), c.Route.Retry, h.Breakers,
+	res, err := router.Execute(ctx, planFor(rt, c), c.Route.Retry, h.Breakers,
 		func(ctx context.Context, t router.Target) error {
 			p, ok := rt.Registry.Get(t.Provider)
 			if !ok {
@@ -45,6 +46,11 @@ func (h *Handlers) openStream(ctx context.Context, rt *Runtime, c *pipeline.Call
 			}
 			stoppedInTime := ttft.Stop()
 			c.UpstreamTime += time.Since(start)
+			if err == nil {
+				h.observe(health.Sample{Target: t, TTFT: time.Since(start), Outcome: outcome(err)})
+			} else {
+				h.observe(health.Sample{Target: t, Outcome: outcome(err)})
+			}
 			if err != nil {
 				scancel()
 				if !stoppedInTime && ctx.Err() == nil {
@@ -68,6 +74,7 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 
 	var chunks <-chan *api.ChatChunk
 	var upstreamErr func() error
+	var firstAt time.Time
 	if handled {
 		ch := make(chan *api.ChatChunk)
 		go func() {
@@ -96,6 +103,7 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 		}
 		defer cancel()
 		defer stream.Close()
+		firstAt = time.Now()
 		c.TTFT = time.Since(c.Start)
 		chunks, upstreamErr = pump(ctx, stream, first, c.Route.StreamIdleTimeout, cancel)
 	}
@@ -148,6 +156,7 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 	c.Latency = time.Since(c.Start)
 	if !handled {
 		price(rt, c, asm.Text())
+		h.observe(health.Sample{Target: c.Target, Tokens: c.Usage.CompletionTokens, Gen: time.Since(firstAt)})
 	}
 	w.Header().Set("X-ProofGate-Cost-USD", usd(c.CostMicros)) // sent as a trailer
 }

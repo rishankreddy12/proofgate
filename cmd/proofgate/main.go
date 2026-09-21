@@ -18,11 +18,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/proofgate/proofgate/internal/analytics"
+	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/budget"
 	"github.com/proofgate/proofgate/internal/cache"
 	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/guard"
+	"github.com/proofgate/proofgate/internal/health"
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/router"
@@ -96,6 +98,8 @@ func run(cfgPath string) error {
 	if err != nil {
 		return err
 	}
+	tracker := health.NewTracker(cfg.Health, cfg.SLOs, time.Now)
+	rt.Router.SetHealth(tracker.Degraded)
 	state := &server.State{}
 	state.Store(rt)
 
@@ -148,7 +152,7 @@ func run(cfgPath string) error {
 		ratelimit.NewStage(limiter, cfg.Defaults.MaxTokensReserve, cfg.Defaults.DefaultMaxTokens, metrics.FailOpen.Inc),
 		budget.NewStage(ledger, time.Now),
 	)
-	h = &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now,
+	h = &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now, Health: tracker,
 		OnEmbed: func(ev server.EmbedEvent) {
 			metrics.ObserveEmbed(ev.Route, ev.Target, telemetry.StatusOf(ev.Err), ev.Tokens, ev.CostMicros, ev.Duration)
 			usage.Emit(analytics.UsageEvent{TS: time.Now().Add(-ev.Duration), RequestID: uuid.NewString(), TenantID: ev.Principal.TenantID,
@@ -174,6 +178,8 @@ func run(cfgPath string) error {
 			slog.Error("runtime rebuild failed; keeping previous", "err", err)
 			return
 		}
+		next.Router.SetHealth(tracker.Degraded)
+		tracker.SetSLOs(merged.SLOs)
 		state.Store(next)
 	}
 
@@ -195,11 +201,34 @@ func run(cfgPath string) error {
 		}
 	})
 
+	probe := func(ctx context.Context, t router.Target) (time.Duration, error) {
+		one := 1
+		p, ok := state.Load().Registry.Get(t.Provider)
+		if !ok {
+			return 0, errors.New("unknown provider")
+		}
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		start := time.Now()
+		st, err := p.ChatStream(ctx, t.Model, &api.ChatRequest{MaxTokens: &one,
+			Messages: []api.Message{{Role: "user", Content: api.Content{Text: "ping"}}}})
+		if err != nil {
+			return 0, err
+		}
+		defer st.Close()
+		if _, err := st.Recv(); err != nil {
+			return 0, err
+		}
+		return time.Since(start), nil
+	}
+	go health.NewProber(tracker, probe, cfg.Health.ProbeInterval).Run(ctx)
+
 	public := &http.Server{Addr: cfg.Server.Addr, Handler: telemetry.Tracing(telemetry.AccessLog(h.Routes(authMW.Handler))),
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
 
 	admin := http.NewServeMux()
 	admin.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+	admin.HandleFunc("GET /admin/health", h.HealthAdmin)
 	admin.HandleFunc("POST /admin/cache/purge", server.AdminCachePurgeHandler(rdb))
 	admin.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := st.Ping(r.Context()); err != nil {

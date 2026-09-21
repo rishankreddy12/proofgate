@@ -56,3 +56,16 @@ func TestPlanStrategiesAndBreakers(t *testing.T) {
 	br.Failure(Target{"a", "big"}) // opens (threshold 1)
 	require.Equal(t, []Target{{"b", "small"}, {"a", "big"}}, r.Plan(def), "open breaker moves target to the end")
 }
+
+func TestPlanPutsDegradedBeforeOpenAndAfterHealthy(t *testing.T) {
+	br := NewBreakers(1, time.Minute, time.Now)
+	c, err := config.Parse([]byte(`
+providers: [{name: a, type: openai, base_url: "http://a"}, {name: b, type: openai, base_url: "http://b"}, {name: c, type: openai, base_url: "http://c"}]
+routes: [{name: r, targets: [{provider: a, model: m}, {provider: b, model: m}, {provider: c, model: m}]}]`))
+	require.NoError(t, err)
+	r := New(c, br)
+	r.SetHealth(func(t Target) bool { return t.Provider == "a" })
+	br.Failure(Target{"b", "m"})
+	rt, _ := r.Resolve("r", false)
+	require.Equal(t, []Target{{"c", "m"}, {"a", "m"}, {"b", "m"}}, r.Plan(rt))
+}

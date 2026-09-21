@@ -51,6 +51,7 @@ type Router struct {
 	providers map[string]bool
 	pricing   map[string]config.Price
 	breakers  *Breakers
+	degraded  func(Target) bool
 }
 
 func New(cfg *config.Config, br *Breakers) *Router {
@@ -99,23 +100,30 @@ func (r *Router) blendedPrice(t Target) float64 {
 	return (3*p.Input + p.Output) / 4
 }
 
-// Plan orders targets by strategy, then moves targets with open breakers to the end.
+// SetHealth lets the planner push degraded targets behind healthy ones.
+func (r *Router) SetHealth(degraded func(Target) bool) { r.degraded = degraded }
+
+// Order orders targets: healthy -> slow (degraded) -> open (breaker tripped).
+func (r *Router) Order(plan []Target) []Target {
+	var healthy, slow, open []Target
+	for _, t := range plan {
+		switch {
+		case r.breakers != nil && r.breakers.open(t):
+			open = append(open, t)
+		case r.degraded != nil && r.degraded(t):
+			slow = append(slow, t)
+		default:
+			healthy = append(healthy, t)
+		}
+	}
+	return append(append(healthy, slow...), open...)
+}
+
+// Plan orders targets by strategy, then moves degraded targets and open breakers to the end.
 func (r *Router) Plan(rt *Route) []Target {
 	plan := append([]Target(nil), rt.Targets...)
 	if rt.Strategy == "cheapest" {
 		sort.SliceStable(plan, func(i, j int) bool { return r.blendedPrice(plan[i]) < r.blendedPrice(plan[j]) })
 	}
-	if r.breakers == nil {
-		return plan
-	}
-	healthy := plan[:0:0]
-	var open []Target
-	for _, t := range plan {
-		if r.breakers.open(t) {
-			open = append(open, t)
-		} else {
-			healthy = append(healthy, t)
-		}
-	}
-	return append(healthy, open...)
+	return r.Order(plan)
 }

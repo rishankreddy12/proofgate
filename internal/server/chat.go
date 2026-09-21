@@ -9,6 +9,7 @@ import (
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/budget"
+	"github.com/proofgate/proofgate/internal/health"
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/router"
@@ -24,6 +25,7 @@ type Handlers struct {
 	Ledger   budget.Ledger     // used directly by the embeddings handler
 	Now      func() time.Time
 	OnEmbed  func(EmbedEvent) // optional metrics hook
+	Health   *health.Tracker
 }
 
 func decodeChat(r *http.Request) (*api.ChatRequest, error) {
