@@ -22,6 +22,7 @@ routes:
     targets:
       - {provider: mock-a, model: mock-small}
       - {provider: mock-b, model: mock-large}
+    hedge: {enabled: true, max_extra: 0.1}
     cache:
       mode: on
       exact: true
@@ -41,3 +42,14 @@ routes:
     embeddings: true
     targets:
       - {provider: mock-a, model: mock-embed}
+
+slos:
+  mock-a/mock-small: {ttft_ms: 800, max_error_rate: 0.2}
+  mock-b/mock-large: {ttft_ms: 800, max_error_rate: 0.2}
+
+health:
+  alpha: 0.3
+  breaches: 3
+  recover: 30s
+  min_samples: 10
+  probe_interval: 5s
