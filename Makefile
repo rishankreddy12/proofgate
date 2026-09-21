@@ -28,5 +28,6 @@ down:
 	docker compose -f deploy/docker-compose.yml down -v
 
 e2e: up
+	bash scripts/e2e_security_setup.sh
 	go test -race -tags e2e -count=1 ./e2e/...
 	bash scripts/sdk_smoke.sh

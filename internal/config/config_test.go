@@ -30,7 +30,7 @@ func TestLoadValidWithDefaults(t *testing.T) {
 			return "sk-ant"
 		}
 		return ""
-	})
+	}, nil)
 	require.Equal(t, "sk-ant", specs[1].APIKey)
 	require.Equal(t, "", specs[0].APIKey)
 }

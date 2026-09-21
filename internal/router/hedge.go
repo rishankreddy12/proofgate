@@ -65,7 +65,9 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 		return v, res, false, err
 	}
 	ctxA, cancelA := context.WithCancel(ctx)
+	defer cancelA()
 	ctxB, cancelB := context.WithCancel(ctx)
+	defer cancelB()
 	results := make(chan outcome[T], 2)
 	launch := func(c context.Context, t Target) {
 		go func() {

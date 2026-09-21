@@ -5,8 +5,8 @@ An open-source Go LLM gateway that proves its optimisations are safe.
 One OpenAI-compatible API in front of OpenAI, Anthropic, Gemini and local models (Ollama, vLLM), with
 distributed token-aware rate limits, budgets, fallbacks, circuit breakers and full tracing.
 
-> Status: v0.4.0: resilience & agent governance: SLO-aware failover, hedged requests, per-run agent budgets, loop detection, and streamable MCP proxy.
-> See [Agent Governance Guide](docs/agents.md) and [Phase 4 Results](docs/results/phase4.md).
+> Status: v0.5.0: zero-trust security & enterprise controls: envelope encryption, on-demand key cache, log scrubbing, hardened distroless image, signed releases with SBOM and provenance, and machine-checked STRIDE threat model.
+> See [STRIDE Threat Model](docs/threat-model.md), [Security Policy](SECURITY.md), [Agent Governance Guide](docs/agents.md), and [Phase 4 Results](docs/results/phase4.md).
 
 ## Quickstart (no API keys needed)
 
@@ -41,8 +41,30 @@ Point any OpenAI SDK at `http://localhost:8080/v1` with that key.
 | Quality-verified smart routing | Fast-path rule classification + kNN embedding distance-weighted voting for cost-effective model selection (e.g. gpt-4o-mini vs gpt-4o) |
 | Quality degradation auto-rollback | Pairwise shadow evaluations in ClickHouse; bootstrap confidence interval monitoring on quality deltas ($\Delta \text{quality} = Q_{\text{routed}} - Q_{\text{strong}}$); auto-rollback via PostgreSQL `route_overrides` if upper 95% CI bound $< -0.05$ |
 | Analytics & audit | Every request, token usage, guardrail trigger, proof evaluation, and MCP tool call logged to ClickHouse; Grafana dashboard with cost by tenant and net cache savings |
-| Rate limits & budgets | Token & request rate limits in Redis Lua scripts; monthly USD budget per tenant in micro-USD |
+| Zero-trust key management | Envelope encryption (AES-256-GCM per-record DEK, local or HashiCorp Vault Transit KEK); keys in memory ≤ 60s; log scrubber redacting provider/tenant secrets; panic recovery; no cloud credentials in gateway pods |
+| Supply chain & container hardening | Digest-pinned distroless images (no shell, non-root, read-only rootfs, no capabilities); SHA-pinned CI actions; keyless Cosign image signing; Syft SBOM & SLSA provenance attestations; machine-checked STRIDE threat model |
 | Observability | Prometheus metrics (gateway overhead, p99 latencies, cache hit rates, guardrail blocks, hedged calls), OpenTelemetry GenAI spans |
+
+## Zero-Trust Security Architecture
+
+ProofGate treats the gateway as a critical boundary holding all provider keys. It answers the 2026 LiteLLM PyPI compromise with architectural controls:
+
+- **Envelope Encryption**: Provider keys in Postgres are sealed records: encrypted with individual AES-256-GCM data encryption keys (DEKs) wrapped by a key-encryption key (KEK). AAD (`proofgate:provider:<name>`) prevents cross-provider ciphertext swapping.
+- **Local & Vault Transit KEKs**: Supports both local KEK files (`proofgatectl kek generate`) and HashiCorp Vault Transit HTTP API with Kubernetes ServiceAccount authentication (`/v1/auth/kubernetes/login`).
+- **Zero Secrets on the CLI**: `proofgatectl provider-key set --provider openai` reads the secret strictly from stdin, never from command-line arguments or environment variables.
+- **Bounded Plaintext Lifetime**:Plaintext keys are cached in memory for at most 60 seconds (`cache_ttl`) and can be flushed instantly across replicas via `POST /admin/secrets/purge`.
+- **Secret Scrubbing**: Log handler (`telemetry.Scrubber`) intercepts all log records and redacts registered provider keys (`[REDACTED]`) and detected API tokens (`[REDACTED:SECRET]`). Panic recovery converts crashes to 500s without logging request bodies.
+- **Container Hardening**: Built from digest-pinned Google Distroless base images; runs as user `65532:65532` with a read-only root filesystem, dropped Linux capabilities (`cap_drop: [ALL]`), and no shell (`/bin/sh`).
+- **Machine-Checked STRIDE Threat Model**: The STRIDE threat model in [`docs/threat-model.md`](docs/threat-model.md) and [`docs/threat-model.yaml`](docs/threat-model.yaml) is checked by automated tests (`internal/securitydocs/threatmodel_test.go`) ensuring every mitigation maps to a passing test.
+
+### Verifying Releases
+```bash
+cosign verify ghcr.io/<owner>/proofgate:v0.5.0 \
+  --certificate-identity-regexp 'https://github.com/<owner>/proofgate/\.github/workflows/release\.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+gh attestation verify oci://ghcr.io/<owner>/proofgate:v0.5.0 --owner <owner>
+```
 
 ## Proof Layer Architecture
 

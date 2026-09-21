@@ -1,20 +1,19 @@
-# Example configuration. Model ids and prices are examples: copy current values from each provider's
-# pricing page before using this for cost numbers. Prices are USD per 1M tokens.
+# Host-path configuration for running proofgatectl on the host.
 server:
   addr: ":8080"
-  admin_addr: "0.0.0.0:9090"   # inside the container only; do not publish this port publicly
+  admin_addr: "127.0.0.1:9090"
 
 secrets:
   kek: local
-  local_kek_file: /run/secrets/local_kek
+  local_kek_file: deploy/secrets/local_kek.b64
 
 providers:
-  - {name: mock-a, type: openai, base_url: "http://mockllm-a:8081/v1", api_key_db: true}
-  - {name: mock-b, type: openai, base_url: "http://mockllm-b:8081/v1", api_key_db: true}
+  - {name: mock-a, type: openai, base_url: "http://localhost:18081/v1", api_key_db: true}
+  - {name: mock-b, type: openai, base_url: "http://localhost:18082/v1", api_key_db: true}
   - {name: openai, type: openai, base_url: "https://api.openai.com/v1", api_key_env: OPENAI_API_KEY}
   - {name: anthropic, type: anthropic, base_url: "https://api.anthropic.com", api_key_env: ANTHROPIC_API_KEY}
   - {name: gemini, type: gemini, base_url: "https://generativelanguage.googleapis.com", api_key_env: GEMINI_API_KEY}
-  - {name: ollama, type: openai, base_url: "http://ollama:11434/v1"}
+  - {name: ollama, type: openai, base_url: "http://localhost:11434/v1"}
 
 pricing:
   mock-a/mock-small:   {input: 0.10, output: 0.40}
