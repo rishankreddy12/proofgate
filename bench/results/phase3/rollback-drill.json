@@ -1,0 +1,6 @@
+{
+  "swap_at": 1726912800,
+  "rollback_observed_at": 1726912845,
+  "seconds_to_rollback": 45,
+  "mode": "strong_only"
+}

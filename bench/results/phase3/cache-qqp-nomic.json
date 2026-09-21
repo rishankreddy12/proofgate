@@ -1,0 +1,24 @@
+{
+  "dataset": "bench/datasets/qqp-replay.jsonl",
+  "choice_1pct": {
+    "point": {
+      "threshold": 0.86,
+      "hit_rate": 0.124,
+      "false_hit_rate": 0.002,
+      "wilson_lower": 0.0003,
+      "wilson_upper": 0.0098,
+      "n": 500
+    }
+  },
+  "choice_5pct": {
+    "point": {
+      "threshold": 0.82,
+      "hit_rate": 0.168,
+      "false_hit_rate": 0.021,
+      "wilson_lower": 0.011,
+      "wilson_upper": 0.046,
+      "n": 500
+    }
+  },
+  "kappa": 0.885
+}
