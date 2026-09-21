@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -60,6 +61,11 @@ func main() {
 	allowDirect := fs.Bool("allow-direct", false, "allow provider/model targets")
 	env := fs.String("env", "live", "key environment label")
 	id := fs.String("id", "", "key id")
+	runCost := fs.Float64("run-max-cost-usd", 0, "max spend per agent run in USD")
+	runSteps := fs.Int("run-max-steps", 0, "max steps per agent run")
+	runTokens := fs.Int("run-max-tokens", 0, "max tokens per agent run")
+	requireRunID := fs.Bool("require-run-id", false, "require X-ProofGate-Run-Id header")
+	mcpPolicyPath := fs.String("mcp-policy", "", "path to JSON file with MCP policy")
 	_ = fs.Parse(os.Args[3:])
 	policy := store.TenantPolicy{RPM: *rpm, TPM: *tpm, MonthlyBudgetUSD: *budget, Strict: *strict}
 
@@ -92,7 +98,27 @@ func main() {
 		if *routes != "" {
 			rs = strings.Split(*routes, ",")
 		}
-		k, err := st.CreateKey(ctx, t.ID, *name, prefix, hash, rs, store.KeyPolicy{AllowDirect: *allowDirect})
+		kp := store.KeyPolicy{AllowDirect: *allowDirect}
+		if *runCost > 0 || *runSteps > 0 || *runTokens > 0 || *requireRunID {
+			kp.Run = &store.RunPolicy{
+				MaxCostUSD:   *runCost,
+				MaxSteps:     *runSteps,
+				MaxTokens:    *runTokens,
+				RequireRunID: *requireRunID,
+			}
+		}
+		if *mcpPolicyPath != "" {
+			b, err := os.ReadFile(*mcpPolicyPath)
+			if err != nil {
+				die("read mcp policy: %v", err)
+			}
+			var mp store.MCPPolicy
+			if err := json.Unmarshal(b, &mp); err != nil {
+				die("parse mcp policy: %v", err)
+			}
+			kp.MCP = &mp
+		}
+		k, err := st.CreateKey(ctx, t.ID, *name, prefix, hash, rs, kp)
 		if err != nil {
 			die("create key: %v", err)
 		}
