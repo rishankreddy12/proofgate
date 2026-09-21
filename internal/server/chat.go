@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
@@ -13,6 +14,7 @@ import (
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/router"
+	"github.com/proofgate/proofgate/internal/telemetry"
 )
 
 const maxBody = 10 << 20
@@ -26,6 +28,24 @@ type Handlers struct {
 	Now      func() time.Time
 	OnEmbed  func(EmbedEvent) // optional metrics hook
 	Health   *health.Tracker
+	Metrics  *telemetry.Metrics
+	Hedges   sync.Map
+}
+
+func (h *Handlers) hedgeBudget(r *router.Route) *router.HedgeBudget {
+	if r == nil {
+		return nil
+	}
+	if v, ok := h.Hedges.Load(r.Name); ok {
+		return v.(*router.HedgeBudget)
+	}
+	maxExtra := r.Hedge.MaxExtra
+	if maxExtra <= 0 {
+		maxExtra = 0.10
+	}
+	b := router.NewHedgeBudget(maxExtra)
+	v, _ := h.Hedges.LoadOrStore(r.Name, b)
+	return v.(*router.HedgeBudget)
 }
 
 func decodeChat(r *http.Request) (*api.ChatRequest, error) {

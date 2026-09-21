@@ -28,6 +28,7 @@ type Metrics struct {
 	breaker    *prometheus.GaugeVec
 	embeds     *prometheus.CounterVec
 	embedToks  *prometheus.CounterVec
+	hedges     *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -46,8 +47,9 @@ func NewMetrics() *Metrics {
 		breaker:  prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "proofgate_breaker_open", Help: "1 open, 0.5 half-open, 0 closed."}, []string{"target"}),
 		embeds:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_embeddings_total", Help: "Embedding requests."}, []string{"route", "target", "status"}),
 		embedToks: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_embedding_tokens_total", Help: "Embedding tokens."}, []string{"route", "target", "status"}),
+		hedges:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_hedges_total", Help: "Hedged requests."}, []string{"route", "outcome"}),
 	}
-	for _, c := range []prometheus.Collector{m.FailOpen, m.requests, m.duration, m.overhead, m.ttft, m.tokens, m.cost, m.unpriced, m.breaker, m.embeds, m.embedToks} {
+	for _, c := range []prometheus.Collector{m.FailOpen, m.requests, m.duration, m.overhead, m.ttft, m.tokens, m.cost, m.unpriced, m.breaker, m.embeds, m.embedToks, m.hedges} {
 		f(c)
 	}
 	return m
@@ -95,6 +97,13 @@ func (m *Metrics) ObserveEmbed(route, target, status string, tokens int, costMic
 	m.embeds.WithLabelValues(route, target, status).Inc()
 	m.embedToks.WithLabelValues(route, target, status).Add(float64(tokens))
 	m.cost.WithLabelValues(route, target).Add(float64(costMicros) / 1e6)
+}
+
+func (m *Metrics) ObserveHedge(route, outcome string) {
+	if m == nil || m.hedges == nil {
+		return
+	}
+	m.hedges.WithLabelValues(route, outcome).Inc()
 }
 
 type metricsStage struct{ m *Metrics }

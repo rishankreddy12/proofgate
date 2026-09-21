@@ -81,6 +81,12 @@ type SmartRouteConfig struct {
 	ConfidenceThreshold float64 `yaml:"confidence_threshold"`
 }
 
+type HedgeConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Delay    time.Duration `yaml:"delay"`
+	MaxExtra float64       `yaml:"max_extra"` // max share of requests that may be hedged, default 0.10
+}
+
 type RouteConfig struct {
 	Name              string           `yaml:"name"`
 	Targets           []TargetConfig   `yaml:"targets"`
@@ -92,6 +98,7 @@ type RouteConfig struct {
 	Cache             CacheConfig      `yaml:"cache"`
 	Guard             GuardConfig      `yaml:"guard"`
 	SmartRoute        SmartRouteConfig `yaml:"smart_route"`
+	Hedge             HedgeConfig      `yaml:"hedge"`
 }
 
 type Defaults struct {
@@ -191,6 +198,9 @@ func (c *Config) applyDefaults() {
 		}
 		if cc.MaxEntryBytes == 0 {
 			cc.MaxEntryBytes = 64 << 10
+		}
+		if r.Hedge.MaxExtra == 0 {
+			r.Hedge.MaxExtra = 0.10
 		}
 	}
 	if c.Health.Alpha == 0 {

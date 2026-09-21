@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
@@ -21,51 +22,114 @@ func wantsUsage(req *api.ChatRequest) bool {
 
 func usageOnly(c *api.ChatChunk) bool { return c.Usage != nil && len(c.Choices) == 0 }
 
+type streamResult struct {
+	stream provider.Stream
+	first  *api.ChatChunk
+	cancel context.CancelFunc
+}
+
 // openStream runs the router until one target produces a first chunk (rule 1 in the plan).
 func (h *Handlers) openStream(ctx context.Context, rt *Runtime, c *pipeline.Call) (provider.Stream, *api.ChatChunk, context.CancelFunc, error) {
-	var (
-		stream provider.Stream
-		first  *api.ChatChunk
-		cancel context.CancelFunc
-	)
-	res, err := router.Execute(ctx, planFor(rt, c), c.Route.Retry, h.Breakers,
-		func(ctx context.Context, t router.Target) error {
-			p, ok := rt.Registry.Get(t.Provider)
-			if !ok {
-				return api.NoHealthyTarget()
-			}
-			sctx, scancel := context.WithCancel(ctx)
-			ttft := time.AfterFunc(c.Route.Timeout, scancel)
-			start := time.Now()
-			s, err := p.ChatStream(sctx, t.Model, c.Request)
-			if err == nil {
-				first, err = s.Recv()
-				if err != nil {
-					s.Close()
-				}
-			}
-			stoppedInTime := ttft.Stop()
-			c.UpstreamTime += time.Since(start)
-			if err == nil {
-				h.observe(health.Sample{Target: t, TTFT: time.Since(start), Outcome: outcome(err)})
-			} else {
-				h.observe(health.Sample{Target: t, Outcome: outcome(err)})
-			}
+	plan := planFor(rt, c)
+	fn := func(ctx context.Context, t router.Target) (streamResult, error) {
+		p, ok := rt.Registry.Get(t.Provider)
+		if !ok {
+			return streamResult{}, api.NoHealthyTarget()
+		}
+		sctx, scancel := context.WithCancel(ctx)
+		ttft := time.AfterFunc(c.Route.Timeout, scancel)
+		start := time.Now()
+		s, err := p.ChatStream(sctx, t.Model, c.Request)
+		var first *api.ChatChunk
+		if err == nil {
+			first, err = s.Recv()
 			if err != nil {
-				scancel()
-				if !stoppedInTime && ctx.Err() == nil {
-					return &provider.Error{Provider: t.Provider, Status: 504, Message: "time to first token exceeded", Retryable: true}
-				}
-				if errors.Is(err, io.EOF) {
-					return &provider.Error{Provider: t.Provider, Status: 502, Message: "empty stream", Retryable: true}
-				}
-				return err
+				s.Close()
 			}
-			stream, cancel = s, scancel
-			return nil
+		}
+		stoppedInTime := ttft.Stop()
+		atomic.AddInt64((*int64)(&c.UpstreamTime), int64(time.Since(start)))
+		if err == nil {
+			h.observe(health.Sample{Target: t, TTFT: time.Since(start), Outcome: outcome(err)})
+		} else {
+			h.observe(health.Sample{Target: t, Outcome: outcome(err)})
+		}
+		if err != nil {
+			scancel()
+			if !stoppedInTime && ctx.Err() == nil {
+				return streamResult{}, &provider.Error{Provider: t.Provider, Status: 504, Message: "time to first token exceeded", Retryable: true}
+			}
+			if errors.Is(err, io.EOF) {
+				return streamResult{}, &provider.Error{Provider: t.Provider, Status: 502, Message: "empty stream", Retryable: true}
+			}
+			return streamResult{}, err
+		}
+		return streamResult{stream: s, first: first, cancel: scancel}, nil
+	}
+
+	discard := func(res streamResult) {
+		if res.cancel != nil {
+			res.cancel()
+		}
+		if res.stream != nil {
+			res.stream.Close()
+		}
+	}
+
+	var (
+		resResult streamResult
+		res       router.Result
+		hedged    bool
+		err       error
+	)
+
+	if c.Route.Hedge.Enabled && len(plan) >= 2 {
+		b := h.hedgeBudget(c.Route)
+		b.Request()
+		defDelay := 150 * time.Millisecond
+		if c.Route.Hedge.Delay > 0 {
+			defDelay = c.Route.Hedge.Delay
+		}
+		delay := defDelay
+		if h.Health != nil {
+			delay = h.Health.HedgeDelay(plan[0], defDelay)
+		}
+		resResult, res, hedged, err = router.ExecuteHedged[streamResult](
+			ctx, plan, c.Route.Retry, h.Breakers, delay,
+			func() bool {
+				allowed := b.Allow()
+				if allowed && h.Metrics != nil {
+					h.Metrics.ObserveHedge(c.Route.Name, "launched")
+				}
+				return allowed
+			},
+			fn,
+			discard,
+		)
+		if hedged {
+			c.Header.Set("X-ProofGate-Hedged", "true")
+			if h.Metrics != nil {
+				if err == nil {
+					if res.Target == plan[0] {
+						h.Metrics.ObserveHedge(c.Route.Name, "lost")
+					} else {
+						h.Metrics.ObserveHedge(c.Route.Name, "won")
+					}
+				}
+			}
+		}
+	} else {
+		res, err = router.Execute(ctx, plan, c.Route.Retry, h.Breakers, func(ctx context.Context, t router.Target) error {
+			r, e := fn(ctx, t)
+			if e == nil {
+				resResult = r
+			}
+			return e
 		})
+	}
+
 	c.Target, c.Attempts = res.Target, res.Attempts
-	return stream, first, cancel, err
+	return resResult.stream, resResult.first, resResult.cancel, err
 }
 
 func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runtime, c *pipeline.Call, handled bool) {

@@ -43,6 +43,7 @@ type Route struct {
 	Cache             config.CacheConfig
 	Guard             config.GuardConfig
 	SmartRoute        config.SmartRouteConfig
+	Hedge             config.HedgeConfig
 }
 
 type Router struct {
@@ -62,7 +63,7 @@ func New(cfg *config.Config, br *Breakers) *Router {
 	for _, rc := range cfg.Routes {
 		rt := &Route{Name: rc.Name, Strategy: rc.Strategy, Timeout: rc.Timeout, StreamIdleTimeout: rc.StreamIdleTimeout,
 			Retry: RetryPolicy{MaxAttempts: rc.Retry.MaxAttempts, BaseDelay: rc.Retry.BaseDelay}, Embeddings: rc.Embeddings,
-			Cache: rc.Cache, Guard: rc.Guard, SmartRoute: rc.SmartRoute}
+			Cache: rc.Cache, Guard: rc.Guard, SmartRoute: rc.SmartRoute, Hedge: rc.Hedge}
 		for _, t := range rc.Targets {
 			rt.Targets = append(rt.Targets, Target{Provider: t.Provider, Model: t.Model})
 		}

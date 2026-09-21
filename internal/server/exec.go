@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
@@ -69,30 +70,82 @@ func price(rt *Runtime, c *pipeline.Call, completionText string) {
 func (h *Handlers) execChat(ctx context.Context, rt *Runtime, c *pipeline.Call) error {
 	ctx, cancel := context.WithTimeout(ctx, c.Route.Timeout)
 	defer cancel()
-	res, err := router.Execute(ctx, planFor(rt, c), c.Route.Retry, h.Breakers,
-		func(ctx context.Context, t router.Target) error {
-			p, ok := rt.Registry.Get(t.Provider)
-			if !ok {
-				return api.NoHealthyTarget()
+	plan := planFor(rt, c)
+	fn := func(ctx context.Context, t router.Target) (*api.ChatResponse, error) {
+		p, ok := rt.Registry.Get(t.Provider)
+		if !ok {
+			return nil, api.NoHealthyTarget()
+		}
+		start := time.Now()
+		resp, err := p.Chat(ctx, t.Model, c.Request)
+		atomic.AddInt64((*int64)(&c.UpstreamTime), int64(time.Since(start)))
+		s := health.Sample{Target: t, Outcome: outcome(err), Gen: time.Since(start)}
+		if err == nil && resp != nil && resp.Usage != nil {
+			s.Tokens = resp.Usage.CompletionTokens
+		}
+		h.observe(s)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	}
+
+	var (
+		resp   *api.ChatResponse
+		res    router.Result
+		hedged bool
+		err    error
+	)
+	if c.Route.Hedge.Enabled && len(plan) >= 2 {
+		b := h.hedgeBudget(c.Route)
+		b.Request()
+		defDelay := 150 * time.Millisecond
+		if c.Route.Hedge.Delay > 0 {
+			defDelay = c.Route.Hedge.Delay
+		}
+		delay := defDelay
+		if h.Health != nil {
+			delay = h.Health.HedgeDelay(plan[0], defDelay)
+		}
+		resp, res, hedged, err = router.ExecuteHedged[*api.ChatResponse](
+			ctx, plan, c.Route.Retry, h.Breakers, delay,
+			func() bool {
+				allowed := b.Allow()
+				if allowed && h.Metrics != nil {
+					h.Metrics.ObserveHedge(c.Route.Name, "launched")
+				}
+				return allowed
+			},
+			fn,
+			nil,
+		)
+		if hedged {
+			c.Header.Set("X-ProofGate-Hedged", "true")
+			if h.Metrics != nil {
+				if err == nil {
+					if res.Target == plan[0] {
+						h.Metrics.ObserveHedge(c.Route.Name, "lost")
+					} else {
+						h.Metrics.ObserveHedge(c.Route.Name, "won")
+					}
+				}
 			}
-			start := time.Now()
-			resp, err := p.Chat(ctx, t.Model, c.Request)
-			c.UpstreamTime += time.Since(start)
-			s := health.Sample{Target: t, Outcome: outcome(err), Gen: time.Since(start)}
-			if err == nil && resp != nil && resp.Usage != nil {
-				s.Tokens = resp.Usage.CompletionTokens
+		}
+	} else {
+		res, err = router.Execute(ctx, plan, c.Route.Retry, h.Breakers, func(ctx context.Context, t router.Target) error {
+			r, e := fn(ctx, t)
+			if e == nil {
+				resp = r
 			}
-			h.observe(s)
-			if err != nil {
-				return err
-			}
-			c.Response = resp
-			return nil
+			return e
 		})
+	}
+
 	c.Target, c.Attempts = res.Target, res.Attempts
 	if err != nil {
 		return err
 	}
+	c.Response = resp
 	text := ""
 	if len(c.Response.Choices) > 0 {
 		text = c.Response.Choices[0].Message.Content.PlainText()
