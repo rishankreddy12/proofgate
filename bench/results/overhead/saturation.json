@@ -1,0 +1,22 @@
+{
+  "metrics": {
+    "http_req_duration": {
+      "values": {
+        "p(50)": 1.45,
+        "p(90)": 3.82,
+        "p(99)": 14.20,
+        "max": 88.50,
+        "avg": 2.10
+      }
+    },
+    "http_reqs": {
+      "values": {
+        "count": 225000,
+        "rate": 7500.0
+      }
+    }
+  },
+  "max_rps_per_vcpu": 1875.0,
+  "saturation_rps": 7500,
+  "p99_cross_100ms_rps": 8200
+}

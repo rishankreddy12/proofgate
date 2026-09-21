@@ -1,0 +1,37 @@
+{
+  "label": "stream-200 direct",
+  "url": "http://localhost:18083",
+  "route": "mock-small",
+  "requested_rps": 200,
+  "duration_s": 30,
+  "requests": 6000,
+  "errors": 0,
+  "overload": 0,
+  "achieved_rps": 200,
+  "ttft": {
+    "p50_ms": 1.28,
+    "p90_ms": 1.58,
+    "p99_ms": 2.15,
+    "max_ms": 4.60,
+    "mean_ms": 1.38
+  },
+  "total": {
+    "p50_ms": 367.85,
+    "p90_ms": 372.60,
+    "p99_ms": 381.40,
+    "max_ms": 398.50,
+    "mean_ms": 369.00
+  },
+  "by_target": {
+    "mock-small": 6000
+  },
+  "meta": {
+    "commit": "0b4180e",
+    "date": "2026-09-21T06:07:00Z",
+    "gateway": "none",
+    "host_cpus": 8,
+    "max_tokens": 64,
+    "prompt_chars": 200,
+    "stream": true
+  }
+}

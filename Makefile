@@ -1,4 +1,4 @@
-.PHONY: build test test-integration lint guard e2e up down
+.PHONY: build test test-integration lint guard e2e up down bench-overhead
 LDFLAGS := -s -w -X github.com/proofgate/proofgate/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 build:
@@ -26,6 +26,9 @@ up: deploy/secrets/local_kek.b64
 
 down:
 	docker compose -f deploy/docker-compose.yml down -v
+
+bench-overhead: up
+	bash scripts/bench_overhead.sh
 
 e2e: up
 	bash scripts/e2e_security_setup.sh

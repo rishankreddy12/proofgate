@@ -7,6 +7,9 @@ x-gateway: &gateway
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
   secrets: [local_kek]
+  deploy:
+    resources:
+      limits: {cpus: "4", memory: 8g}
   environment:
     DATABASE_URL: postgres://proofgate:proofgate@postgres:5432/proofgate?sslmode=disable
     REDIS_URL: redis://redis:6379/0
@@ -22,6 +25,7 @@ x-gateway: &gateway
     clickhouse: {condition: service_healthy}
     mockllm-a: {condition: service_started}
     mockllm-b: {condition: service_started}
+    mockllm-bench: {condition: service_started}
   healthcheck:
     test: ["CMD", "/usr/local/bin/proofgate", "-healthcheck"]
     interval: 2s
@@ -45,12 +49,16 @@ services:
     build: {context: .., dockerfile: deploy/Dockerfile.mockllm}
     command: ["-name", "b", "-addr", ":8081"]
     ports: ["127.0.0.1:18082:8081"]
+  mockllm-bench:
+    build: {context: .., dockerfile: deploy/Dockerfile.mockllm}
+    command: ["-name", "bench", "-addr", ":8081", "-ttft-ms", "50", "-tps", "200"]
+    ports: ["127.0.0.1:18083:8081"]
   gateway-1:
     <<: *gateway
     ports: ["18080:8080", "127.0.0.1:19090:9090"]
   gateway-2:
     <<: *gateway
-    ports: ["18083:8080", "127.0.0.1:19091:9090"]
+    ports: ["18085:8080", "127.0.0.1:19091:9090"]
   gateway-3:
     <<: *gateway
     ports: ["18084:8080", "127.0.0.1:19092:9090"]

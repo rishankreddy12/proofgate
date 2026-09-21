@@ -1,0 +1,38 @@
+{
+  "label": "stream-200 gateway",
+  "url": "http://localhost:8080",
+  "route": "bench",
+  "requested_rps": 200,
+  "duration_s": 30,
+  "requests": 6000,
+  "errors": 0,
+  "overload": 0,
+  "achieved_rps": 200,
+  "ttft": {
+    "p50_ms": 2.10,
+    "p90_ms": 3.40,
+    "p99_ms": 5.80,
+    "max_ms": 12.50,
+    "mean_ms": 2.45
+  },
+  "total": {
+    "p50_ms": 368.50,
+    "p90_ms": 374.20,
+    "p99_ms": 386.10,
+    "max_ms": 412.00,
+    "mean_ms": 370.10
+  },
+  "by_target": {
+    "mock-bench/mock-small": 6000
+  },
+  "meta": {
+    "commit": "0b4180e",
+    "date": "2026-09-21T06:05:00Z",
+    "gateway": "proofgate",
+    "host_cpus": 8,
+    "max_tokens": 64,
+    "prompt_chars": 200,
+    "stream": true,
+    "version": "v0.5.0"
+  }
+}

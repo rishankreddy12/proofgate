@@ -11,6 +11,7 @@ secrets:
 providers:
   - {name: mock-a, type: openai, base_url: "http://mockllm-a:8081/v1", api_key_db: true}
   - {name: mock-b, type: openai, base_url: "http://mockllm-b:8081/v1", api_key_db: true}
+  - {name: mock-bench, type: openai, base_url: "http://mockllm-bench:8081/v1"}
   - {name: openai, type: openai, base_url: "https://api.openai.com/v1", api_key_env: OPENAI_API_KEY}
   - {name: anthropic, type: anthropic, base_url: "https://api.anthropic.com", api_key_env: ANTHROPIC_API_KEY}
   - {name: gemini, type: gemini, base_url: "https://generativelanguage.googleapis.com", api_key_env: GEMINI_API_KEY}
@@ -20,6 +21,7 @@ pricing:
   mock-a/mock-small:   {input: 0.10, output: 0.40}
   mock-b/mock-large:   {input: 1.00, output: 4.00}
   mock-a/mock-embed:   {input: 0.02, output: 0}
+  mock-bench/mock-small: {input: 0.10, output: 0.40}
 
 routes:
   - name: default
@@ -31,6 +33,11 @@ routes:
       mode: on
       exact: true
       ttl: 24h
+  - name: bench
+    targets:
+      - {provider: mock-bench, model: mock-small}
+    cache:
+      mode: "off"
   - name: faq
     targets:
       - {provider: mock-a, model: mock-small}
