@@ -5,8 +5,8 @@ An open-source Go LLM gateway that proves its optimisations are safe.
 One OpenAI-compatible API in front of OpenAI, Anthropic, Gemini and local models (Ollama, vLLM), with
 distributed token-aware rate limits, budgets, fallbacks, circuit breakers and full tracing.
 
-> Status: v0.3.0, proof layer: safe semantic cache calibration, quality-verified smart routing with auto-rollback, and reversible PII guardrails.
-> SLO-aware failover, agent-run budgets and published benchmarks are on the roadmap.
+> Status: v0.4.0: resilience & agent governance: SLO-aware failover, hedged requests, per-run agent budgets, loop detection, and streamable MCP proxy.
+> See [Agent Governance Guide](docs/agents.md) and [Phase 4 Results](docs/results/phase4.md).
 
 ## Quickstart (no API keys needed)
 
@@ -28,7 +28,11 @@ Point any OpenAI SDK at `http://localhost:8080/v1` with that key.
 | OpenAI-compatible API | `/v1/chat/completions` (streaming and tools), `/v1/embeddings`, `/v1/models` |
 | Providers | OpenAI-compatible (OpenAI, Azure OpenAI v1, Ollama, vLLM), Anthropic, Gemini. `net/http` only, no SDKs |
 | Streaming | Unbuffered SSE; failover before the first token; idle timeout; client disconnect cancels upstream; cost in an HTTP trailer |
-| Failover | Retries with full-jitter backoff; 429 and auth errors move to the next target; bad requests are never retried; per-target circuit breakers |
+| Failover & Circuit Breakers | Retries with full-jitter backoff; 429 and auth errors move to the next target; bad requests are never retried; per-target circuit breakers |
+| SLO-aware routing | Routing around slow providers via per-target EWMA tracking of TTFT, tokens/sec and error rate; background prober; hysteresis |
+| Hedged requests | Dynamic delay ($\text{TTFT} + 2\cdot\text{dev}$), capped at 10% request share, immediate loser cancellation |
+| Agent run budgets & loop detection | Per-run cost (USD), step and token caps via atomic Redis Lua; normalized step fingerprinting halts loops at 3 repeats |
+| MCP reverse proxy | Streamable HTTP proxy mounted at `/mcp/{server}` with tool allow/deny lists, JSON-RPC filtering, and ClickHouse audit |
 | Exact cache | Tenant-isolated, scoped by route, system prompt and sampling parameters; tags and purge |
 | Semantic cache | RediSearch HNSW per tenant and scope; calibrated safely via shadow mode, false-hit sweep, and LLM-judge verification |
 | Safe cache calibration | Shadow logging to ClickHouse; pointwise LLM Judge with position-bias swap; false-hit curve with Wilson 95% confidence intervals; human agreement gate ($\kappa \ge 0.70$) |
@@ -36,9 +40,9 @@ Point any OpenAI SDK at `http://localhost:8080/v1` with that key.
 | Prompt injection defense | Heuristic scoring (instruction overrides, jailbreaks, roleplay persona shifts, base64 obfuscation) with configurable block/flag actions |
 | Quality-verified smart routing | Fast-path rule classification + kNN embedding distance-weighted voting for cost-effective model selection (e.g. gpt-4o-mini vs gpt-4o) |
 | Quality degradation auto-rollback | Pairwise shadow evaluations in ClickHouse; bootstrap confidence interval monitoring on quality deltas ($\Delta \text{quality} = Q_{\text{routed}} - Q_{\text{strong}}$); auto-rollback via PostgreSQL `route_overrides` if upper 95% CI bound $< -0.05$ |
-| Analytics & audit | Every request, token usage, guardrail trigger, and proof evaluation logged to ClickHouse; Grafana dashboard with cost by tenant and net cache savings |
+| Analytics & audit | Every request, token usage, guardrail trigger, proof evaluation, and MCP tool call logged to ClickHouse; Grafana dashboard with cost by tenant and net cache savings |
 | Rate limits & budgets | Token & request rate limits in Redis Lua scripts; monthly USD budget per tenant in micro-USD |
-| Observability | Prometheus metrics (gateway overhead, p99 latencies, cache hit rates, guardrail blocks), OpenTelemetry GenAI spans |
+| Observability | Prometheus metrics (gateway overhead, p99 latencies, cache hit rates, guardrail blocks, hedged calls), OpenTelemetry GenAI spans |
 
 ## Proof Layer Architecture
 
