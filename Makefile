@@ -18,7 +18,10 @@ guard:
 	bash scripts/tests/test_check_no_provider_sdk.sh
 	bash scripts/check_no_provider_sdk.sh go.mod
 
-up:
+deploy/secrets/local_kek.b64:
+	go run ./cmd/proofgatectl kek generate > $@
+
+up: deploy/secrets/local_kek.b64
 	docker compose -f deploy/docker-compose.yml up -d --build --wait
 
 down:

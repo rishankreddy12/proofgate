@@ -1,11 +1,12 @@
-FROM golang:latest AS build
+# Refresh digests with: docker buildx imagetools inspect golang:1.23 --format '{{json .Manifest.Digest}}'
+FROM golang:1.23@sha256:73f0632491fa6e927dd514f7ce9556d6a524aeb9d3b036c84f8ee732e4d0c117 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/mockllm ./cmd/mockllm
+RUN CGO_ENABLED=0 GOFLAGS=-mod=readonly go build -trimpath -ldflags "-s -w" -o /out/mockllm ./cmd/mockllm
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:6ec7f65401662991cf9dc297e68cfb940026e642571ef5eb38cf0014798e1687
 COPY --from=build /out/mockllm /usr/local/bin/mockllm
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/mockllm"]

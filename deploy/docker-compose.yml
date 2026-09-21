@@ -1,6 +1,12 @@
 name: proofgate
 x-gateway: &gateway
   build: {context: .., dockerfile: deploy/Dockerfile}
+  read_only: true
+  tmpfs: [/tmp]
+  user: "65532:65532"
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  secrets: [local_kek]
   environment:
     DATABASE_URL: postgres://proofgate:proofgate@postgres:5432/proofgate?sslmode=disable
     REDIS_URL: redis://redis:6379/0
@@ -81,4 +87,8 @@ services:
     depends_on:
       - prometheus
       - clickhouse
+
+secrets:
+  local_kek:
+    file: ./secrets/local_kek.b64
 

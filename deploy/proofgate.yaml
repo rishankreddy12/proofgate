@@ -4,6 +4,10 @@ server:
   addr: ":8080"
   admin_addr: "0.0.0.0:9090"   # inside the container only; do not publish this port publicly
 
+secrets:
+  kek: local
+  local_kek_file: /run/secrets/local_kek
+
 providers:
   - {name: mock-a, type: openai, base_url: "http://mockllm-a:8081/v1"}
   - {name: mock-b, type: openai, base_url: "http://mockllm-b:8081/v1"}
