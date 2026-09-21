@@ -1,0 +1,25 @@
+suite: pod hardening
+templates: [deployment.yaml]
+tests:
+  - it: runs as non-root with a read-only root filesystem and no capabilities
+    asserts:
+      - equal: {path: spec.template.spec.securityContext.runAsNonRoot, value: true}
+      - equal: {path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem, value: true}
+      - equal: {path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation, value: false}
+      - contains: {path: spec.template.spec.containers[0].securityContext.capabilities.drop, content: ALL}
+      - equal: {path: spec.template.spec.securityContext.seccompProfile.type, value: RuntimeDefault}
+  - it: uses the digest when one is set
+    set: {image.digest: "sha256:deadbeef"}
+    asserts:
+      - matchRegex: {path: spec.template.spec.containers[0].image, pattern: "@sha256:deadbeef$"}
+  - it: readiness uses the admin port
+    asserts:
+      - equal: {path: spec.template.spec.containers[0].readinessProbe.httpGet.path, value: /readyz}
+      - equal: {path: spec.template.spec.containers[0].readinessProbe.httpGet.port, value: 9090}
+  - it: does not mount a service account token unless Vault auth is on
+    asserts:
+      - equal: {path: spec.template.spec.automountServiceAccountToken, value: false}
+  - it: mounts the token when Vault auth is on
+    set: {vault.enabled: true}
+    asserts:
+      - equal: {path: spec.template.spec.automountServiceAccountToken, value: true}

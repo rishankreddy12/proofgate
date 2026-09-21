@@ -1,0 +1,12 @@
+suite: network policy
+templates: [networkpolicy.yaml]
+tests:
+  - it: allows DNS and the configured egress only
+    asserts:
+      - isKind: {of: NetworkPolicy}
+      - contains: {path: spec.policyTypes, content: Egress}
+      - equal: {path: spec.egress[0].ports[0].port, value: 53}
+  - it: can be disabled
+    set: {networkPolicy.enabled: false}
+    asserts:
+      - hasDocuments: {count: 0}

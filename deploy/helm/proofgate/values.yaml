@@ -1,0 +1,97 @@
+replicaCount: 3
+
+image:
+  repository: proofgate
+  pullPolicy: IfNotPresent
+  tag: ""
+  digest: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  adminPort: 9090
+
+resources:
+  limits:
+    cpu: "2"
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+vault:
+  enabled: false
+  role: "proofgate-role"
+  addr: "http://vault.vault.svc.cluster.local:8200"
+
+secrets:
+  localKek:
+    existingSecret: ""
+
+env: []
+envFrom: []
+
+networkPolicy:
+  enabled: true
+  dnsPort: 53
+  egressCIDRs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  ingressFrom: []
+
+serviceMonitor:
+  enabled: false
+  interval: 10s
+
+config: |
+  server:
+    addr: ":8080"
+    admin_addr: "0.0.0.0:9090"
+  secrets:
+    kek: local
+    local_kek_file: /run/secrets/local_kek
+  providers:
+    - name: mock
+      type: openai
+      base_url: "http://mockllm:8081/v1"
+  routes:
+    - name: default
+      targets:
+        - provider: mock
+          model: mock-small
