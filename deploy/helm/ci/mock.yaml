@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mockllm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mockllm
+  template:
+    metadata:
+      labels:
+        app: mockllm
+    spec:
+      containers:
+        - name: mockllm
+          image: proofgate-mock:ci
+          imagePullPolicy: Never
+          command: ["/usr/local/bin/mockllm", "-addr", ":8081", "-name", "mock"]
+          ports:
+            - containerPort: 8081
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mockllm
+spec:
+  ports:
+    - port: 8081
+  selector:
+    app: mockllm
