@@ -99,12 +99,28 @@ type Defaults struct {
 	DefaultMaxTokens int `yaml:"default_max_tokens"`
 }
 
+type SLO struct {
+	TTFTMs       float64 `yaml:"ttft_ms"`
+	MinTPS       float64 `yaml:"min_tps"`
+	MaxErrorRate float64 `yaml:"max_error_rate"`
+}
+
+type HealthConfig struct {
+	Alpha         float64       `yaml:"alpha"`
+	Breaches      int           `yaml:"breaches"`
+	Recover       time.Duration `yaml:"recover"`
+	MinSamples    int           `yaml:"min_samples"`
+	ProbeInterval time.Duration `yaml:"probe_interval"`
+}
+
 type Config struct {
 	Server    ServerConfig     `yaml:"server"`
 	Providers []ProviderConfig `yaml:"providers"`
 	Pricing   map[string]Price `yaml:"pricing"`
 	Routes    []RouteConfig    `yaml:"routes"`
 	Defaults  Defaults         `yaml:"defaults"`
+	SLOs      map[string]SLO   `yaml:"slos"`
+	Health    HealthConfig     `yaml:"health"`
 }
 
 func Load(path string) (*Config, error) {
@@ -177,6 +193,21 @@ func (c *Config) applyDefaults() {
 			cc.MaxEntryBytes = 64 << 10
 		}
 	}
+	if c.Health.Alpha == 0 {
+		c.Health.Alpha = 0.2
+	}
+	if c.Health.Breaches == 0 {
+		c.Health.Breaches = 3
+	}
+	if c.Health.Recover == 0 {
+		c.Health.Recover = 30 * time.Second
+	}
+	if c.Health.MinSamples == 0 {
+		c.Health.MinSamples = 10
+	}
+	if c.Health.ProbeInterval == 0 {
+		c.Health.ProbeInterval = 10 * time.Second
+	}
 }
 
 func (c *Config) validate() error {
@@ -200,6 +231,14 @@ func (c *Config) validate() error {
 		}
 		if p.BaseURL == "" {
 			errs = append(errs, fmt.Errorf("provider %q: base_url is required", p.Name))
+		}
+	}
+	for key := range c.SLOs {
+		p, m, ok := strings.Cut(key, "/")
+		if !ok || p == "" || m == "" {
+			errs = append(errs, fmt.Errorf("slo %q: key must be 'provider/model'", key))
+		} else if !provs[p] {
+			errs = append(errs, fmt.Errorf("slo %q: unknown provider %q", key, p))
 		}
 	}
 	routes := map[string]bool{}
