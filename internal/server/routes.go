@@ -15,6 +15,9 @@ func (h *Handlers) Routes(authMW func(http.Handler) http.Handler) http.Handler {
 		r.Post("/v1/chat/completions", h.Chat)
 		r.Post("/v1/embeddings", h.Embeddings)
 		r.Get("/v1/models", h.Models)
+		if h.MCP != nil {
+			r.Handle("/mcp/{server}", h.MCP)
+		}
 	})
 	return r
 }

@@ -30,6 +30,7 @@ type Handlers struct {
 	Health   *health.Tracker
 	Metrics  *telemetry.Metrics
 	Hedges   sync.Map
+	MCP      http.Handler
 }
 
 func (h *Handlers) hedgeBudget(r *router.Route) *router.HedgeBudget {

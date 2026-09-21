@@ -4,13 +4,23 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/proofgate/proofgate/internal/provider"
 	"gopkg.in/yaml.v3"
 )
+
+var mcpNameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+
+type MCPServerConfig struct {
+	Name    string            `yaml:"name"`
+	URL     string            `yaml:"url"`
+	Headers map[string]string `yaml:"headers_env"` // header name -> env var holding its value
+}
 
 type ServerConfig struct {
 	Addr      string `yaml:"addr"`
@@ -121,13 +131,15 @@ type HealthConfig struct {
 }
 
 type Config struct {
-	Server    ServerConfig     `yaml:"server"`
-	Providers []ProviderConfig `yaml:"providers"`
-	Pricing   map[string]Price `yaml:"pricing"`
-	Routes    []RouteConfig    `yaml:"routes"`
-	Defaults  Defaults         `yaml:"defaults"`
-	SLOs      map[string]SLO   `yaml:"slos"`
-	Health    HealthConfig     `yaml:"health"`
+	Server           ServerConfig      `yaml:"server"`
+	Providers        []ProviderConfig  `yaml:"providers"`
+	Pricing          map[string]Price  `yaml:"pricing"`
+	Routes           []RouteConfig     `yaml:"routes"`
+	Defaults         Defaults          `yaml:"defaults"`
+	SLOs             map[string]SLO    `yaml:"slos"`
+	Health           HealthConfig      `yaml:"health"`
+	MCPServers       []MCPServerConfig `yaml:"mcp_servers"`
+	MCPInsecureHosts []string          `yaml:"mcp_insecure_hosts"`
 }
 
 func Load(path string) (*Config, error) {
@@ -299,6 +311,35 @@ func (c *Config) validate() error {
 			} else if !embedRoutes[cc.EmbeddingRoute] {
 				errs = append(errs, fmt.Errorf("route %q: embedding_route %q must name a route with embeddings: true", r.Name, cc.EmbeddingRoute))
 			}
+		}
+	}
+	mcpNames := map[string]bool{}
+	insecure := map[string]bool{}
+	for _, h := range c.MCPInsecureHosts {
+		insecure[h] = true
+	}
+	for _, s := range c.MCPServers {
+		if !mcpNameRe.MatchString(s.Name) {
+			errs = append(errs, fmt.Errorf("mcp server name %q must match ^[a-z0-9_-]{1,32}$", s.Name))
+		}
+		if mcpNames[s.Name] {
+			errs = append(errs, fmt.Errorf("duplicate mcp server %q", s.Name))
+		}
+		mcpNames[s.Name] = true
+		u, err := url.Parse(s.URL)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("mcp server %q: invalid url %q: %w", s.Name, s.URL, err))
+			continue
+		}
+		hostname := u.Hostname()
+		if u.Scheme == "https" {
+			// ok
+		} else if u.Scheme == "http" {
+			if hostname != "localhost" && !strings.HasSuffix(hostname, ".local") && !insecure[hostname] {
+				errs = append(errs, fmt.Errorf("mcp server %q: url must be https (http allowed only for localhost, .local or mcp_insecure_hosts)", s.Name))
+			}
+		} else {
+			errs = append(errs, fmt.Errorf("mcp server %q: url must have https or http scheme", s.Name))
 		}
 	}
 	return errors.Join(errs...)

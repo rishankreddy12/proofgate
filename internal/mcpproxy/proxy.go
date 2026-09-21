@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/proofgate/proofgate/internal/agentrun"
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/auth"
@@ -67,6 +68,9 @@ func (p *Proxy) forward(r *http.Request, up Upstream, body []byte) (*http.Respon
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("server")
+	if name == "" {
+		name = chi.URLParam(r, "server")
+	}
 	up, ok := p.d.Upstreams()[name]
 	if !ok {
 		api.WriteError(w, &api.Error{Status: 404, Message: "unknown MCP server " + name, Type: "invalid_request_error", Code: "invalid_request"})

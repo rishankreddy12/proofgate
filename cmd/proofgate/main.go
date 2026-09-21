@@ -26,6 +26,7 @@ import (
 	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/guard"
 	"github.com/proofgate/proofgate/internal/health"
+	"github.com/proofgate/proofgate/internal/mcpproxy"
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/router"
@@ -163,6 +164,13 @@ func run(cfgPath string) error {
 				KeyID: ev.Principal.KeyID, Route: ev.Route, Target: ev.Target, Kind: "embeddings", Status: telemetry.StatusOf(ev.Err),
 				Cache: "none", PromptTokens: uint32(ev.Tokens), CostMicros: ev.CostMicros, LatencyMs: uint32(ev.Duration.Milliseconds())})
 		}}
+	mcpAudit := analytics.NewBatcher("mcp_calls", 20_000, 2_000, time.Second, analytics.InsertMCP(chConn),
+		func() { usageDropped.WithLabelValues("mcp_calls").Inc() })
+	h.MCP = mcpproxy.New(mcpproxy.Deps{
+		Upstreams: func() map[string]mcpproxy.Upstream { return state.Load().MCP },
+		Runs:      runs,
+		Audit:     mcpAudit.Emit,
+	})
 	authMW := auth.NewMiddleware(st, 30*time.Second, 5*time.Second)
 
 	var (
@@ -295,5 +303,6 @@ func run(cfgPath string) error {
 	}
 	cacheStage.Wait()
 	_ = usage.Close(sctx)
+	_ = mcpAudit.Close(sctx)
 	return shutdownTracing(sctx)
 }
