@@ -1,0 +1,44 @@
+name: proofgate-bench
+services:
+  mockllm-bench:
+    build: {context: ../.., dockerfile: deploy/Dockerfile.mockllm}
+    command: ["-name", "bench", "-addr", ":8081", "-ttft-ms", "50", "-tps", "200"]
+  proofgate:
+    build: {context: ../.., dockerfile: deploy/Dockerfile}
+    volumes:
+      - ./proofgate.bench.yaml:/etc/proofgate/proofgate.yaml:ro
+      - ../../deploy/secrets/local_kek.b64:/run/secrets/local_kek:ro
+    environment:
+      DATABASE_URL: postgres://proofgate:proofgate@postgres:5432/proofgate?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      CLICKHOUSE_DSN: clickhouse://proofgate:proofgate@clickhouse:9000/proofgate
+    ports: ["8080:8080", "127.0.0.1:9090:9090"]
+    deploy:
+      resources:
+        limits: {cpus: "4", memory: 8g}
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: proofgate, POSTGRES_PASSWORD: proofgate, POSTGRES_DB: proofgate}
+  redis:
+    image: redis/redis-stack-server:7.4.0-v1
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_DB: proofgate
+      CLICKHOUSE_USER: proofgate
+      CLICKHOUSE_PASSWORD: proofgate
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable@sha256:685fba3ce6e9447330ce164627d425b6a71cb0a84dfbe58bfd6be206ee8542fc
+    command: ["--config", "/app/config.yaml", "--num_workers", "4"]
+    volumes: ["./litellm.config.yaml:/app/config.yaml:ro"]
+    ports: ["8091:4000"]
+    deploy:
+      resources:
+        limits: {cpus: "4", memory: 8g}
+  bifrost:
+    image: maximhq/bifrost:latest@sha256:f58ec40251ff9ea0a2ecda681816bc8d8e12ff481b7a2bb38053c9b7ee72fbf8
+    volumes: ["./bifrost.config.json:/app/data/config.json:ro"]
+    ports: ["8092:8080"]
+    deploy:
+      resources:
+        limits: {cpus: "4", memory: 8g}

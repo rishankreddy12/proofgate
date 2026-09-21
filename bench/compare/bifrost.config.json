@@ -1,0 +1,8 @@
+{
+  "providers": {
+    "openai": {
+      "keys": [{ "value": "sk-not-used", "models": ["mock-small"], "weight": 1 }],
+      "network_config": { "base_url": "http://mockllm-bench:8081/v1" }
+    }
+  }
+}

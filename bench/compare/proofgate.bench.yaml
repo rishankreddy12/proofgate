@@ -1,0 +1,22 @@
+server:
+  addr: ":8080"
+  admin_addr: "0.0.0.0:9090"
+
+secrets:
+  kek: local
+  local_kek_file: /run/secrets/local_kek
+
+providers:
+  - name: mock-bench
+    type: openai
+    base_url: "http://mockllm-bench:8081/v1"
+
+pricing:
+  mock-bench/mock-small: {input: 0.10, output: 0.40}
+
+routes:
+  - name: bench
+    targets:
+      - {provider: mock-bench, model: mock-small}
+    cache:
+      mode: "off"

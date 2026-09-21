@@ -1,0 +1,38 @@
+{
+  "label": "proofgate stream-1000",
+  "url": "http://localhost:8080",
+  "route": "bench",
+  "requested_rps": 1000,
+  "duration_s": 30,
+  "requests": 30000,
+  "errors": 0,
+  "overload": 0,
+  "achieved_rps": 999.8,
+  "ttft": {
+    "p50_ms": 3.14,
+    "p90_ms": 6.66,
+    "p99_ms": 11.52,
+    "max_ms": 27.83,
+    "mean_ms": 3.77
+  },
+  "total": {
+    "p50_ms": 370.83,
+    "p90_ms": 382.02,
+    "p99_ms": 404.69,
+    "max_ms": 445.16,
+    "mean_ms": 374.54
+  },
+  "by_target": {
+    "bench": 30000
+  },
+  "meta": {
+    "commit": "0b4180e",
+    "date": "2026-09-21T07:02:00Z",
+    "gateway": "proofgate",
+    "image": "local-build",
+    "host_cpus": 8,
+    "max_tokens": 64,
+    "prompt_chars": 200,
+    "stream": true
+  }
+}

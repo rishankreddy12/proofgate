@@ -1,0 +1,38 @@
+{
+  "label": "litellm stream-1000",
+  "url": "http://localhost:8091",
+  "route": "bench",
+  "requested_rps": 1000,
+  "duration_s": 30,
+  "requests": 30000,
+  "errors": 38,
+  "overload": 0,
+  "achieved_rps": 962.2,
+  "ttft": {
+    "p50_ms": 24.01,
+    "p90_ms": 51.06,
+    "p99_ms": 86.63,
+    "max_ms": 139.16,
+    "mean_ms": 28.03
+  },
+  "total": {
+    "p50_ms": 412.09,
+    "p90_ms": 464.73,
+    "p99_ms": 524.48,
+    "max_ms": 576.92,
+    "mean_ms": 416.21
+  },
+  "by_target": {
+    "bench": 29962
+  },
+  "meta": {
+    "commit": "0b4180e",
+    "date": "2026-09-21T07:02:00Z",
+    "gateway": "litellm",
+    "image": "ghcr.io/berriai/litellm:main-stable@sha256:685fba3ce6e9447330ce164627d425b6a71cb0a84dfbe58bfd6be206ee8542fc",
+    "host_cpus": 8,
+    "max_tokens": 64,
+    "prompt_chars": 200,
+    "stream": true
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "label": "bifrost stream-1000",
+  "url": "http://localhost:8092",
+  "route": "bench",
+  "requested_rps": 1000,
+  "duration_s": 30,
+  "requests": 30000,
+  "errors": 0,
+  "overload": 0,
+  "achieved_rps": 999.8,
+  "ttft": {
+    "p50_ms": 8.23,
+    "p90_ms": 17.84,
+    "p99_ms": 31.46,
+    "max_ms": 63.21,
+    "mean_ms": 9.95
+  },
+  "total": {
+    "p50_ms": 384.81,
+    "p90_ms": 410.09,
+    "p99_ms": 441.56,
+    "max_ms": 485.71,
+    "mean_ms": 388.66
+  },
+  "by_target": {
+    "bench": 30000
+  },
+  "meta": {
+    "commit": "0b4180e",
+    "date": "2026-09-21T07:02:00Z",
+    "gateway": "bifrost",
+    "image": "maximhq/bifrost:latest@sha256:f58ec40251ff9ea0a2ecda681816bc8d8e12ff481b7a2bb38053c9b7ee72fbf8",
+    "host_cpus": 8,
+    "max_tokens": 64,
+    "prompt_chars": 200,
+    "stream": true
+  }
+}

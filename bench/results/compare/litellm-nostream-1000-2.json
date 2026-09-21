@@ -1,0 +1,38 @@
+{
+  "label": "litellm nostream-1000",
+  "url": "http://localhost:8091",
+  "route": "bench",
+  "requested_rps": 1000,
+  "duration_s": 30,
+  "requests": 30000,
+  "errors": 42,
+  "overload": 0,
+  "achieved_rps": 957.9,
+  "ttft": {
+    "p50_ms": 0,
+    "p90_ms": 0,
+    "p99_ms": 0,
+    "max_ms": 0,
+    "mean_ms": 0
+  },
+  "total": {
+    "p50_ms": 414.58,
+    "p90_ms": 467.53,
+    "p99_ms": 527.47,
+    "max_ms": 580.22,
+    "mean_ms": 418.73
+  },
+  "by_target": {
+    "bench": 29958
+  },
+  "meta": {
+    "commit": "0b4180e",
+    "date": "2026-09-21T07:02:00Z",
+    "gateway": "litellm",
+    "image": "ghcr.io/berriai/litellm:main-stable@sha256:685fba3ce6e9447330ce164627d425b6a71cb0a84dfbe58bfd6be206ee8542fc",
+    "host_cpus": 8,
+    "max_tokens": 64,
+    "prompt_chars": 200,
+    "stream": false
+  }
+}
