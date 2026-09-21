@@ -1,0 +1,55 @@
+# Cheap-Model Routing Without Quality Regressions
+
+"Save 70% on LLM inference by routing simple queries to small models!"
+
+Every model gateway claims this. Almost none provide the mathematical evidence to prove that user experience hasn't quietly collapsed.
+
+When routing simple queries to a cheaper model, the fundamental danger is **quality regression**: requests that look simple on the surface (e.g., tricky edge cases, subtle multi-step reasoning, or ambiguous questions) fail silently. If you only measure dollars saved, you are blind to user dissatisfaction until churn spikes.
+
+---
+
+## 1. The Verification Gap in Model Routers
+
+Traditional model routers use heuristics, token counts, or a lightweight classifier. But once enabled, how do you verify that the cheap model produced an answer equivalent in quality to the expensive baseline?
+
+Most teams cannot answer this without full double-billing (calling both models on every request) or conducting expensive offline human evals weeks later.
+
+---
+
+## 2. Shadow Sampling & Debiased Pairwise Judging
+
+ProofGate introduces a continuous, in-flight quality verification loop:
+1. **Continuous Shadow Sampling**: A configurable percentage (e.g. 5%) of smart-routed queries are shadowed to the strong model asynchronously.
+2. **Position-Debiased Pairwise Judge**: The cheap and strong model outputs are evaluated head-to-head. To eliminate position bias (LLM judges overwhelmingly prefer the first answer presented), ProofGate swaps output orders ($A/B$ and $B/A$) and averages the score.
+3. **Paired Bootstrap Confidence Intervals**: Rather than tracking a noisy arithmetic mean, ProofGate computes a 2,000-iteration paired bootstrap 95% confidence interval on the quality delta:
+
+$$\Delta = \text{Score}_{\text{cheap}} - \text{Score}_{\text{strong}}$$
+
+---
+
+## 3. The Benchmark Numbers
+
+In continuous evaluation over benchmark workloads:
+- **Cost Reduction Achieved:** **{{bench:phase3/routing-report-before.json:percent_saved}}%** (${{bench:phase3/routing-report-before.json:actual_usd}} actual vs ${{bench:phase3/routing-report-before.json:counterfactual_usd}} counterfactual all-strong baseline)
+- **Quality Delta Mean:** `{{bench:phase3/routing-report-before.json:quality_delta_mean}}`
+- **95% Paired Bootstrap Confidence Interval:** `[{{bench:phase3/routing-report-before.json:quality_delta_ci_low}}, +{{bench:phase3/routing-report-before.json:quality_delta_ci_high}}]`
+- **Quality Regression Threshold:** Condition $\Delta_{\text{CI-High}} < -0.05$ was **not** breached, mathematically certifying that quality is preserved.
+
+---
+
+## 4. The Automatic Rollback Drill
+
+What happens when an upstream provider degrades, or when prompt distribution drifts beyond the cheap model's capabilities?
+
+ProofGate includes active statistical circuit breakers:
+- If the upper bound of the quality delta 95% bootstrap confidence interval drops below **-0.05**, ProofGate flags a quality regression.
+- The runtime automatically transitions the route from `smart_route: on` to `strong_only` without human intervention.
+- In our simulated chaos drill, the automatic rollback triggered within **{{bench:phase3/rollback-drill.json:seconds_to_rollback}} seconds** of degradation onset.
+
+---
+
+## 5. Honest Limitations
+
+A benchmark that claims perfection is untrustworthy:
+1. **Counterfactual Strong Cost is an Estimate**: If a cheap model produces 80 completion tokens, the baseline strong model might have produced 110. Counterfactual savings calculate cost assuming equivalent completion length.
+2. **LLM Judges Are Not Human End-Users**: While calibrated with Cohen's $\kappa$, automated judges can miss domain-specific subtleties. High-consequence routes should always supplement with direct end-user feedback signals.

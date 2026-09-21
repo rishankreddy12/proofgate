@@ -49,14 +49,14 @@ Every number below is extracted directly from committed benchmark results verifi
 
 | Metric | Result | Description |
 | :--- | :---: | :--- |
-| **Streaming Added Latency (p50)** | **3.2 ms** | Client-observed TTFT delta vs direct mock at 1,000 RPS |
-| **Streaming Added Latency (p99)** | **11.75 ms** | Gateway proxy overhead under heavy concurrent streaming load |
-| **Saturation Throughput** | **7,500 RPS** | Sustained load before p99 latency exceeds 100ms (4 vCPUs) |
-| **Throughput Density** | **1,875 RPS/vCPU** | Linear scaling density per container CPU core |
-| **Verified Smart Routing Savings** | **39.29%** | Cost reduction with 95% bootstrap CI $[-0.0020, +0.0006]$ |
-| **Semantic Cache False-Hit Bound** | **$\le 1\%$** | Wilson score 95% upper bound on QQP at threshold `0.86` |
-| **Automated Rollback Latency** | **45s** | Time to detect quality regression and auto-revert to strong model |
-| **First-Run Setup Time** | **42s** | Clean clone to working 200 OK response timed in CI |
+| **Streaming Added Latency (p50)** | **{{bench:overhead/stream-1000-gateway-1.json:ttft.p50_ms}} ms** | Client-observed TTFT delta vs direct mock at 1,000 RPS |
+| **Streaming Added Latency (p99)** | **{{bench:overhead/stream-1000-gateway-1.json:ttft.p99_ms}} ms** | Gateway proxy overhead under heavy concurrent streaming load |
+| **Saturation Throughput** | **{{bench:overhead/saturation.json:saturation_rps}} RPS** | Sustained load before p99 latency exceeds 100ms (4 vCPUs) |
+| **Throughput Density** | **{{bench:overhead/saturation.json:max_rps_per_vcpu}} RPS/vCPU** | Linear scaling density per container CPU core |
+| **Verified Smart Routing Savings** | **{{bench:phase3/routing-report-before.json:percent_saved}}%** | Cost reduction with 95% bootstrap CI $[-0.0020, +0.0006]$ |
+| **Semantic Cache False-Hit Bound** | **$\le 1\%$** | Wilson score 95% upper bound on QQP at threshold `{{bench:phase3/cache-qqp-nomic.json:choice_1pct.point.threshold}}` |
+| **Automated Rollback Latency** | **{{bench:phase3/rollback-drill.json:seconds_to_rollback}}s** | Time to detect quality regression and auto-revert to strong model |
+| **First-Run Setup Time** | **{{bench:first-run.json:seconds}}s** | Clean clone to working 200 OK response timed in CI |
 
 Read the full methodology and same-harness comparison with LiteLLM and Bifrost in [docs/benchmarks.md](docs/benchmarks.md).
 
@@ -65,7 +65,7 @@ Read the full methodology and same-harness comparison with LiteLLM and Bifrost i
 ## Architectural Pillars
 
 ### 1. The Proof Layer (Mathematical Guarantees)
-- **Safe Semantic Cache Calibration**: Runs in shadow mode first. Calibrates cosine similarity against human-labeled datasets using exact **Wilson score confidence intervals** (false-hit upper bound $\le 1\%$). Evaluated with Cohen's $\kappa$ (`0.89` inter-rater agreement).
+- **Safe Semantic Cache Calibration**: Runs in shadow mode first. Calibrates cosine similarity against human-labeled datasets using exact **Wilson score confidence intervals** (false-hit upper bound $\le 1\%$). Evaluated with Cohen's $\kappa$ (`{{bench:phase3/cache-qqp-nomic.json:kappa}}` inter-rater agreement).
 - **Quality-Verified Smart Routing**: Fast-path classification and KNN routing. Continuously verifies output quality using position-debiased pairwise LLM judges and **2,000-iteration paired bootstrap confidence intervals**.
 - **Automated Statistical Rollback**: If cheap-model quality degradation drops below -0.05 on the 95% confidence interval, ProofGate automatically shuts off cheap routing within seconds.
 - **Reversible Privacy Guardrails**: RFC-compliant PII detection (credit cards with Luhn, Aadhaar with Verhoeff, SSN, IP, Email) with token-restoring streaming reconstruction.
