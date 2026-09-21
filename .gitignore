@@ -6,3 +6,4 @@ bench/tmp/
 bench/datasets/*.jsonl
 *.exe
 .quickstart-key
+deploy/bin/
