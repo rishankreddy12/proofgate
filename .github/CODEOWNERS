@@ -1,0 +1,5 @@
+/.github/           @rishankreddy
+/go.mod             @rishankreddy
+/go.sum             @rishankreddy
+/deploy/Dockerfile* @rishankreddy
+/scripts/           @rishankreddy

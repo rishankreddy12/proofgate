@@ -1,18 +1,34 @@
 name: ci
 on: [push, pull_request]
-permissions:
-  contents: read
+permissions: {}
 jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: bash scripts/tests/test_check_pinned_actions.sh && bash scripts/check_pinned_actions.sh .
+      - run: make guard
   test:
     runs-on: ubuntu-latest
+    permissions: {contents: read}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: "1.23" }
-      - run: make guard
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with: {go-version: "1.23"}
+      - run: go mod verify
       - run: go vet ./...
-      - uses: golangci/golangci-lint-action@v6
-        with: { version: v1.61 }
+      - uses: golangci/golangci-lint-action@971e284b6050e8a5849174e72974d18386cf5c44 # v6.1.1
+        with: {version: v1.61}
       - run: go test -race ./...
       - run: go test -race -tags integration ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.3 ./...
+  image:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: docker build -f deploy/Dockerfile -t proofgate:ci .
+      - run: bash scripts/check_image.sh proofgate:ci
+      - uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        with: {image-ref: "proofgate:ci", severity: "HIGH,CRITICAL", ignore-unfixed: true, exit-code: "1"}
