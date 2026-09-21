@@ -51,3 +51,15 @@ func TestWriter(t *testing.T) {
 	require.Equal(t, "data: {\"n\":1}\n\ndata: [DONE]\n\n", rec.Body.String())
 	require.True(t, rec.Flushed)
 }
+
+func TestEventIDAndRawWrite(t *testing.T) {
+	r := NewReader(strings.NewReader("id: 42\nevent: message\ndata: {}\n\n"))
+	e, err := r.Next()
+	require.NoError(t, err)
+	require.Equal(t, "42", e.ID)
+	rec := httptest.NewRecorder()
+	w, _ := NewWriter(rec)
+	require.NoError(t, w.Event(e))
+	require.Equal(t, "id: 42\nevent: message\ndata: {}\n\n", rec.Body.String())
+}
+

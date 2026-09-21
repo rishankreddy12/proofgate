@@ -1,6 +1,7 @@
 package sse
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -59,3 +60,24 @@ func (s *Writer) raw(b []byte) error {
 	s.f.Flush()
 	return nil
 }
+
+func (s *Writer) Event(e Event) error {
+	s.start()
+	var b []byte
+	if e.ID != "" {
+		b = append(b, "id: "+e.ID+"\n"...)
+	}
+	if e.Name != "" {
+		b = append(b, "event: "+e.Name+"\n"...)
+	}
+	for _, line := range bytes.Split(e.Data, []byte("\n")) {
+		b = append(append(append(b, "data: "...), line...), '\n')
+	}
+	b = append(b, '\n')
+	if _, err := s.w.Write(b); err != nil {
+		return err
+	}
+	s.f.Flush()
+	return nil
+}
+

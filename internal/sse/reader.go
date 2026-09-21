@@ -9,6 +9,7 @@ import (
 )
 
 type Event struct {
+	ID   string
 	Name string
 	Data []byte
 }
@@ -49,6 +50,9 @@ func (r *Reader) Next() (Event, error) {
 		field, value, _ := bytes.Cut(line, []byte(":"))
 		value = bytes.TrimPrefix(value, []byte(" "))
 		switch string(field) {
+		case "id":
+			ev.ID = string(value)
+			have = true
 		case "event":
 			ev.Name = string(value)
 			have = true
