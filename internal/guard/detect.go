@@ -7,6 +7,57 @@ import (
 	"strings"
 )
 
+type Kind string
+
+const (
+	Secret Kind = "SECRET"
+	PII    Kind = "PII"
+)
+
+type Span struct {
+	Kind  Kind
+	Value string
+	Start int
+	End   int
+}
+
+var secretRegexes = []*regexp.Regexp{
+	regexp.MustCompile(`\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,})\b`),
+	regexp.MustCompile(`\b(?:pg_(?:live|test|dev)_[A-Za-z0-9_-]{20,})\b`),
+	regexp.MustCompile(`\b(?:AKIA[0-9A-Z]{16})\b`),
+	regexp.MustCompile(`\b(?:ghp_[A-Za-z0-9]{36})\b`),
+	regexp.MustCompile(`\b(?:hvs\.[A-Za-z0-9_-]{20,})\b`),
+}
+
+func Detect(text string) []Span {
+	var spans []Span
+	for _, re := range secretRegexes {
+		for _, idx := range re.FindAllStringIndex(text, -1) {
+			spans = append(spans, Span{
+				Kind:  Secret,
+				Value: text[idx[0]:idx[1]],
+				Start: idx[0],
+				End:   idx[1],
+			})
+		}
+	}
+	for _, m := range DetectPII(text) {
+		spans = append(spans, Span{
+			Kind:  PII,
+			Value: m.Value,
+			Start: m.Start,
+			End:   m.End,
+		})
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].Start != spans[j].Start {
+			return spans[i].Start < spans[j].Start
+		}
+		return spans[i].End > spans[j].End
+	})
+	return spans
+}
+
 type PIIType string
 
 const (
