@@ -60,7 +60,7 @@ routes:
 `, urls[0], urls[1])))
 	require.NoError(t, err)
 	br := router.NewBreakers(5, time.Minute, time.Now)
-	rt, err := BuildRuntime(cfg, br, os.Getenv)
+	rt, err := BuildRuntime(cfg, br, os.Getenv, nil)
 	require.NoError(t, err)
 	st := &State{}
 	st.Store(rt)

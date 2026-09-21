@@ -11,6 +11,7 @@ type Spec struct {
 	Type    string // openai | anthropic | gemini
 	BaseURL string
 	APIKey  string
+	KeyFunc KeyFunc
 	Headers map[string]string
 }
 
@@ -27,11 +28,11 @@ func NewRegistry(specs []Spec) (*Registry, error) {
 		var p Provider
 		switch s.Type {
 		case "openai":
-			p = NewOpenAI(OpenAIConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, Headers: s.Headers})
+			p = NewOpenAI(OpenAIConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, Headers: s.Headers})
 		case "anthropic":
-			p = NewAnthropic(AnthropicConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey})
+			p = NewAnthropic(AnthropicConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc})
 		case "gemini":
-			p = NewGemini(GeminiConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey})
+			p = NewGemini(GeminiConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc})
 		default:
 			return nil, fmt.Errorf("unknown provider type %q for %q", s.Type, s.Name)
 		}

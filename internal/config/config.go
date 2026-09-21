@@ -366,15 +366,19 @@ func (c *Config) validate() error {
 	return errors.Join(errs...)
 }
 
-// ProviderSpecs resolves API keys from the environment. Plan 5 adds encrypted database credentials.
-func (c *Config) ProviderSpecs(getenv func(string) string) []provider.Spec {
+// ProviderSpecs resolves API keys from the environment and database key resolver.
+func (c *Config) ProviderSpecs(getenv func(string) string, keys func(provider string) provider.KeyFunc) []provider.Spec {
 	out := make([]provider.Spec, 0, len(c.Providers))
 	for _, p := range c.Providers {
 		key := ""
 		if p.APIKeyEnv != "" {
 			key = getenv(p.APIKeyEnv)
 		}
-		out = append(out, provider.Spec{Name: p.Name, Type: p.Type, BaseURL: p.BaseURL, APIKey: key, Headers: p.Headers})
+		var kf provider.KeyFunc
+		if p.APIKeyDB && keys != nil {
+			kf = keys(p.Name)
+		}
+		out = append(out, provider.Spec{Name: p.Name, Type: p.Type, BaseURL: p.BaseURL, APIKey: key, KeyFunc: kf, Headers: p.Headers})
 	}
 	return out
 }

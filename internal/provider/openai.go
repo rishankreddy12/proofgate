@@ -17,6 +17,7 @@ type OpenAIConfig struct {
 	Name    string
 	BaseURL string // e.g. https://api.openai.com/v1 or http://ollama:11434/v1
 	APIKey  string
+	KeyFunc KeyFunc
 	Headers map[string]string
 }
 
@@ -42,8 +43,16 @@ func (p *OpenAI) post(ctx context.Context, path string, body any) (*http.Respons
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if p.cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	key := p.cfg.APIKey
+	if p.cfg.KeyFunc != nil {
+		k, err := p.cfg.KeyFunc(ctx)
+		if err != nil {
+			return nil, &Error{Provider: p.cfg.Name, Status: 401, Message: "credential unavailable", Retryable: false}
+		}
+		key = k
+	}
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	for k, v := range p.cfg.Headers {
 		req.Header.Set(k, v)

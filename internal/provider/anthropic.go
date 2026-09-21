@@ -17,6 +17,7 @@ type AnthropicConfig struct {
 	Name    string
 	BaseURL string // https://api.anthropic.com
 	APIKey  string
+	KeyFunc KeyFunc
 }
 
 type Anthropic struct {
@@ -205,7 +206,17 @@ func (p *Anthropic) post(ctx context.Context, body anthropicRequest) (*http.Resp
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", p.cfg.APIKey)
+	key := p.cfg.APIKey
+	if p.cfg.KeyFunc != nil {
+		k, err := p.cfg.KeyFunc(ctx)
+		if err != nil {
+			return nil, &Error{Provider: p.cfg.Name, Status: 401, Message: "credential unavailable", Retryable: false}
+		}
+		key = k
+	}
+	if key != "" {
+		req.Header.Set("x-api-key", key)
+	}
 	req.Header.Set("anthropic-version", "2023-06-01")
 	resp, err := p.client.Do(req)
 	if err != nil {

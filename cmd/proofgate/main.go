@@ -28,8 +28,10 @@ import (
 	"github.com/proofgate/proofgate/internal/health"
 	"github.com/proofgate/proofgate/internal/mcpproxy"
 	"github.com/proofgate/proofgate/internal/pipeline"
+	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/router"
+	"github.com/proofgate/proofgate/internal/secrets"
 	"github.com/proofgate/proofgate/internal/server"
 	"github.com/proofgate/proofgate/internal/store"
 	"github.com/proofgate/proofgate/internal/telemetry"
@@ -48,20 +50,37 @@ func main() {
 		}
 		os.Exit(0)
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	if err := run(*cfgPath); err != nil {
+	scrubber := telemetry.NewScrubber(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(slog.New(scrubber))
+	if err := run(*cfgPath, scrubber); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(cfgPath string) error {
+func needsDBKeys(cfg *config.Config) bool {
+	for _, p := range cfg.Providers {
+		if p.APIKeyDB {
+			return true
+		}
+	}
+	return false
+}
+
+func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
+	}
+	for _, p := range cfg.Providers {
+		if p.APIKeyEnv != "" {
+			if k := os.Getenv(p.APIKeyEnv); k != "" {
+				scrubber.Register(k)
+			}
+		}
 	}
 	shutdownTracing, err := telemetry.SetupTracing(ctx, "proofgate")
 	if err != nil {
@@ -95,8 +114,26 @@ func run(cfgPath string) error {
 	usage := analytics.NewBatcher("usage_events", 50_000, 5_000, time.Second, analytics.InsertUsage(chConn),
 		func() { usageDropped.WithLabelValues("usage_events").Inc() })
 
+	kek, err := secrets.FromConfig(cfg.Secrets.KEK, cfg.Secrets.LocalKEKFile, cfg.Secrets.VaultAddr, cfg.Secrets.VaultKey,
+		cfg.Secrets.VaultAuth, cfg.Secrets.VaultRole)
+	if err != nil && needsDBKeys(cfg) {
+		return err
+	}
+	var keyCache *secrets.KeyCache
+	if kek != nil {
+		keyCache = secrets.NewKeyCache(st, kek, cfg.Secrets.CacheTTL, scrubber.Register)
+	}
+	keys := func(provider string) provider.KeyFunc {
+		return func(ctx context.Context) (string, error) {
+			if keyCache == nil {
+				return "", errors.New("key cache not configured")
+			}
+			return keyCache.Get(ctx, provider)
+		}
+	}
+
 	breakers := router.NewBreakers(5, 30*time.Second, time.Now)
-	rt, err := server.BuildRuntime(cfg, breakers, os.Getenv)
+	rt, err := server.BuildRuntime(cfg, breakers, os.Getenv, keys)
 	if err != nil {
 		return err
 	}
@@ -185,7 +222,7 @@ func run(cfgPath string) error {
 		for _, e := range errs {
 			slog.Warn("override ignored", "err", e)
 		}
-		next, err := server.BuildRuntime(merged, breakers, os.Getenv)
+		next, err := server.BuildRuntime(merged, breakers, os.Getenv, keys)
 		if err != nil {
 			slog.Error("runtime rebuild failed; keeping previous", "err", err)
 			return
@@ -242,6 +279,12 @@ func run(cfgPath string) error {
 	admin.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
 	admin.HandleFunc("GET /admin/health", h.HealthAdmin)
 	admin.HandleFunc("POST /admin/cache/purge", server.AdminCachePurgeHandler(rdb))
+	admin.HandleFunc("POST /admin/secrets/purge", func(w http.ResponseWriter, _ *http.Request) {
+		if keyCache != nil {
+			keyCache.Purge()
+		}
+		w.WriteHeader(200)
+	})
 	admin.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := st.Ping(r.Context()); err != nil {
 			http.Error(w, "postgres: "+err.Error(), 503)

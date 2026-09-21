@@ -141,7 +141,7 @@ providers: [{name: u, type: openai, base_url: %q}]
 routes: [{name: default, targets: [{provider: u, model: m}]}]`, up.URL)))
 	require.NoError(t, err)
 	br := router.NewBreakers(5, time.Minute, time.Now)
-	rt, _ := BuildRuntime(cfg, br, os.Getenv)
+	rt, _ := BuildRuntime(cfg, br, os.Getenv, nil)
 	st := &State{}
 	st.Store(rt)
 	h := &Handlers{State: st, Breakers: br, Pipeline: pipeline.New(), Now: time.Now}

@@ -18,6 +18,7 @@ type GeminiConfig struct {
 	Name    string
 	BaseURL string // https://generativelanguage.googleapis.com
 	APIKey  string
+	KeyFunc KeyFunc
 }
 
 type Gemini struct {
@@ -229,7 +230,17 @@ func (p *Gemini) post(ctx context.Context, path string, body any) (*http.Respons
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", p.cfg.APIKey)
+	key := p.cfg.APIKey
+	if p.cfg.KeyFunc != nil {
+		k, err := p.cfg.KeyFunc(ctx)
+		if err != nil {
+			return nil, &Error{Provider: p.cfg.Name, Status: 401, Message: "credential unavailable", Retryable: false}
+		}
+		key = k
+	}
+	if key != "" {
+		req.Header.Set("x-goog-api-key", key)
+	}
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, netError(ctx, p.cfg.Name, err)

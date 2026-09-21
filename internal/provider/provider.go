@@ -11,6 +11,8 @@ import (
 	"github.com/proofgate/proofgate/internal/api"
 )
 
+type KeyFunc func(ctx context.Context) (string, error)
+
 type Provider interface {
 	Name() string
 	Chat(ctx context.Context, model string, req *api.ChatRequest) (*api.ChatResponse, error)

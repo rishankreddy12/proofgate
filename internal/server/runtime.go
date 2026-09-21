@@ -33,8 +33,8 @@ func ResolveMCP(cfg *config.Config, getenv func(string) string) map[string]mcppr
 	return out
 }
 
-func BuildRuntime(cfg *config.Config, br *router.Breakers, getenv func(string) string) (*Runtime, error) {
-	reg, err := provider.NewRegistry(cfg.ProviderSpecs(getenv))
+func BuildRuntime(cfg *config.Config, br *router.Breakers, getenv func(string) string, keys func(provider string) provider.KeyFunc) (*Runtime, error) {
+	reg, err := provider.NewRegistry(cfg.ProviderSpecs(getenv, keys))
 	if err != nil {
 		return nil, err
 	}
