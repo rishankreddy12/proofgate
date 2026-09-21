@@ -32,7 +32,18 @@ type ProviderConfig struct {
 	Type      string            `yaml:"type"`
 	BaseURL   string            `yaml:"base_url"`
 	APIKeyEnv string            `yaml:"api_key_env"`
+	APIKeyDB  bool              `yaml:"api_key_db"`
 	Headers   map[string]string `yaml:"headers"`
+}
+
+type SecretsConfig struct {
+	KEK          string        `yaml:"kek"`            // "local" | "vault"
+	LocalKEKFile string        `yaml:"local_kek_file"` // 32 random bytes, base64
+	VaultAddr    string        `yaml:"vault_addr"`
+	VaultKey     string        `yaml:"vault_key"`      // transit key name
+	VaultAuth    string        `yaml:"vault_auth"`     // "token" (VAULT_TOKEN env) | "kubernetes"
+	VaultRole    string        `yaml:"vault_role"`
+	CacheTTL     time.Duration `yaml:"cache_ttl"`      // default 60s
 }
 
 type Price struct {
@@ -140,6 +151,7 @@ type Config struct {
 	Health           HealthConfig      `yaml:"health"`
 	MCPServers       []MCPServerConfig `yaml:"mcp_servers"`
 	MCPInsecureHosts []string          `yaml:"mcp_insecure_hosts"`
+	Secrets          SecretsConfig     `yaml:"secrets"`
 }
 
 func Load(path string) (*Config, error) {
@@ -230,6 +242,12 @@ func (c *Config) applyDefaults() {
 	if c.Health.ProbeInterval == 0 {
 		c.Health.ProbeInterval = 10 * time.Second
 	}
+	if c.Secrets.KEK == "" {
+		c.Secrets.KEK = "local"
+	}
+	if c.Secrets.CacheTTL == 0 {
+		c.Secrets.CacheTTL = 60 * time.Second
+	}
 }
 
 func (c *Config) validate() error {
@@ -253,6 +271,9 @@ func (c *Config) validate() error {
 		}
 		if p.BaseURL == "" {
 			errs = append(errs, fmt.Errorf("provider %q: base_url is required", p.Name))
+		}
+		if p.APIKeyEnv != "" && p.APIKeyDB {
+			errs = append(errs, fmt.Errorf("provider %q: api_key_env and api_key_db are mutually exclusive", p.Name))
 		}
 	}
 	for key := range c.SLOs {

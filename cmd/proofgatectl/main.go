@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/proofgate/proofgate/internal/auth"
+	"github.com/proofgate/proofgate/internal/secrets"
 	"github.com/proofgate/proofgate/internal/store"
 )
 
@@ -26,7 +27,15 @@ func die(format string, a ...any) {
 
 func main() {
 	if len(os.Args) < 3 {
-		die("usage: proofgatectl <tenant|key|label> <command> [flags]")
+		die("usage: proofgatectl <tenant|key|label|provider-key|kek> <command> [flags]")
+	}
+	if os.Args[1] == "kek" && os.Args[2] == "generate" {
+		k, err := secrets.GenerateLocalKEK()
+		if err != nil {
+			die("generate kek: %v", err)
+		}
+		fmt.Println(k)
+		return
 	}
 	if os.Args[1] == "label" && os.Args[2] == "cache" {
 		fs := flag.NewFlagSet("label cache", flag.ExitOnError)
@@ -49,6 +58,10 @@ func main() {
 	defer st.Close()
 	if err := st.Migrate(ctx); err != nil {
 		die("migrate: %v", err)
+	}
+	if os.Args[1] == "provider-key" {
+		providerKey(ctx, st, os.Args[2:])
+		return
 	}
 	fs := flag.NewFlagSet(os.Args[1]+" "+os.Args[2], flag.ExitOnError)
 	name := fs.String("name", "", "tenant or key name")
