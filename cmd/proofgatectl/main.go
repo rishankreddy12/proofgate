@@ -27,7 +27,7 @@ func die(format string, a ...any) {
 
 func main() {
 	if len(os.Args) < 3 {
-		die("usage: proofgatectl <tenant|key|label|provider-key|kek> <command> [flags]")
+		die("usage: proofgatectl <tenant|key|label|provider-key|kek|export> <command> [flags]")
 	}
 	if os.Args[1] == "kek" && os.Args[2] == "generate" {
 		k, err := secrets.GenerateLocalKEK()
@@ -35,6 +35,10 @@ func main() {
 			die("generate kek: %v", err)
 		}
 		fmt.Println(k)
+		return
+	}
+	if os.Args[1] == "export" {
+		runExport(context.Background(), os.Args[2:])
 		return
 	}
 	if os.Args[1] == "label" && os.Args[2] == "cache" {
