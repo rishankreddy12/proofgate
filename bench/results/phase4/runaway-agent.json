@@ -1,0 +1,16 @@
+[
+  {
+    "scenario": "identical tool call every step",
+    "steps_before_block": 3,
+    "status": 429,
+    "code": "agent_loop_detected",
+    "message": "run demo-loop repeated the same step 3 times in its last 20 steps"
+  },
+  {
+    "scenario": "new arguments every step until the budget ends",
+    "steps_before_block": 4,
+    "status": 402,
+    "code": "run_budget_exceeded",
+    "message": "run demo-budget reached max_cost_usd ($0.0000)"
+  }
+]

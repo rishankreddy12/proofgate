@@ -1,0 +1,14 @@
+{
+  "label": "SLO routing + hedging",
+  "route": "default",
+  "rps": 20,
+  "slow_ttft_ms": 3000,
+  "failover_seconds": 1.5,
+  "converged": true,
+  "requests": 1600,
+  "errors": 0,
+  "p95_ttft_ms_before": 18.2,
+  "p95_ttft_ms_after_switch": 320.4,
+  "p95_ttft_ms_after_failover": 21.8,
+  "date": "2026-09-21T10:10:00Z"
+}

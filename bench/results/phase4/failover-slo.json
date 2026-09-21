@@ -1,0 +1,14 @@
+{
+  "label": "SLO routing",
+  "route": "default",
+  "rps": 20,
+  "slow_ttft_ms": 3000,
+  "failover_seconds": 3.0,
+  "converged": true,
+  "requests": 1600,
+  "errors": 0,
+  "p95_ttft_ms_before": 18.2,
+  "p95_ttft_ms_after_switch": 1820.5,
+  "p95_ttft_ms_after_failover": 22.1,
+  "date": "2026-09-21T10:05:00Z"
+}

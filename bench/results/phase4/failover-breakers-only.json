@@ -1,0 +1,14 @@
+{
+  "label": "breakers only",
+  "route": "default",
+  "rps": 20,
+  "slow_ttft_ms": 3000,
+  "failover_seconds": 0,
+  "converged": false,
+  "requests": 1600,
+  "errors": 0,
+  "p95_ttft_ms_before": 18.2,
+  "p95_ttft_ms_after_switch": 3012.4,
+  "p95_ttft_ms_after_failover": 0,
+  "date": "2026-09-21T10:00:00Z"
+}
