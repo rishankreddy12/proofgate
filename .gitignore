@@ -5,3 +5,4 @@ coverage.out
 bench/tmp/
 bench/datasets/*.jsonl
 *.exe
+.quickstart-key
