@@ -1,5 +1,5 @@
 # Refresh digests with: docker buildx imagetools inspect golang:1.25 --format '{{json .Manifest.Digest}}'
-FROM golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f37578dc80 AS build
+FROM golang:1.27@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS build
 WORKDIR /src
 COPY . .
 ARG VERSION=dev
