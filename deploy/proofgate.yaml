@@ -28,6 +28,7 @@ pricing:
   easycli/gemini-3-flash:         {input: 0.00, output: 0.00}
   easycli/gemini-3.7-flash-high:  {input: 0.00, output: 0.00}
   easycli/claude-sonnet-4-6:      {input: 0.00, output: 0.00}
+  easycli/claude-opus-4-6-thinking: {input: 0.00, output: 0.00}
 
 routes:
   - name: default
@@ -46,7 +47,10 @@ routes:
   - name: claude
     targets:
       - {provider: easycli, model: claude-sonnet-4-6}
-      - {provider: easycli, model: gemini-3.7-flash-high} # Automatic fallback
+      - {provider: easycli, model: claude-opus-4-6-thinking}
+    retry:
+      max_attempts: 3
+      base_delay: 1s
     cache:
       mode: on
       exact: true
@@ -59,6 +63,11 @@ routes:
       exact: true
       ttl: 24h
   # Common Cursor model aliases:
+  - name: auto
+    targets:
+      - {provider: easycli, model: claude-sonnet-4-6}
+      - {provider: easycli, model: gemini-3-flash}
+    cache: {mode: on, exact: true, ttl: 24h}
   - name: claude-3-5-sonnet-20241022
     targets:
       - {provider: easycli, model: claude-sonnet-4-6}
