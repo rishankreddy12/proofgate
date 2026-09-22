@@ -16,19 +16,44 @@ providers:
   - {name: anthropic, type: anthropic, base_url: "https://api.anthropic.com", api_key_env: ANTHROPIC_API_KEY}
   - {name: gemini, type: gemini, base_url: "https://generativelanguage.googleapis.com", api_key_env: GEMINI_API_KEY}
   - {name: ollama, type: openai, base_url: "http://ollama:11434/v1"}
+  # Local EasyCLIProxyAPI running on Windows host (OpenAI-compatible format)
+  - {name: easycli, type: openai, base_url: "http://host.docker.internal:8317/v1", api_key_env: EASYCLI_API_KEY}
 
 pricing:
   mock-a/mock-small:   {input: 0.10, output: 0.40}
   mock-b/mock-large:   {input: 1.00, output: 4.00}
   mock-a/mock-embed:   {input: 0.02, output: 0}
   mock-bench/mock-small: {input: 0.10, output: 0.40}
+  # Free local proxy models
+  easycli/gemini-3-flash:         {input: 0.00, output: 0.00}
+  easycli/gemini-3.7-flash-high:  {input: 0.00, output: 0.00}
+  easycli/claude-sonnet-4-6:      {input: 0.00, output: 0.00}
 
 routes:
   - name: default
     targets:
-      - {provider: mock-a, model: mock-small}
-      - {provider: mock-b, model: mock-large}
+      - {provider: easycli, model: gemini-3-flash}
+      - {provider: easycli, model: claude-sonnet-4-6}
+      # --- Original Mock LLM targets (uncomment whenever you want to switch back to mock LLMs) ---
+      # - {provider: mock-a, model: mock-small}
+      # - {provider: mock-b, model: mock-large}
     hedge: {enabled: true, max_extra: 0.1}
+    cache:
+      mode: on
+      exact: true
+      ttl: 24h
+  # Dedicated routes for EasyCLIProxyAPI models:
+  - name: claude
+    targets:
+      - {provider: easycli, model: claude-sonnet-4-6}
+      - {provider: easycli, model: gemini-3.7-flash-high} # Automatic fallback
+    cache:
+      mode: on
+      exact: true
+      ttl: 24h
+  - name: gemini
+    targets:
+      - {provider: easycli, model: gemini-3-flash}
     cache:
       mode: on
       exact: true

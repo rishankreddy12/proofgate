@@ -17,6 +17,9 @@ x-gateway: &gateway
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    EASYCLI_API_KEY: ${EASYCLI_API_KEY:-123456}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   volumes:
     - ./proofgate.yaml:/etc/proofgate/proofgate.yaml:ro
   depends_on:
