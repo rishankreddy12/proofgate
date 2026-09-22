@@ -58,6 +58,35 @@ routes:
       mode: on
       exact: true
       ttl: 24h
+  # Common Cursor model aliases:
+  - name: claude-3-5-sonnet-20241022
+    targets:
+      - {provider: easycli, model: claude-sonnet-4-6}
+      - {provider: easycli, model: gemini-3.7-flash-high}
+    cache: {mode: on, exact: true, ttl: 24h}
+  - name: claude-3-5-sonnet
+    targets:
+      - {provider: easycli, model: claude-sonnet-4-6}
+      - {provider: easycli, model: gemini-3.7-flash-high}
+    cache: {mode: on, exact: true, ttl: 24h}
+  - name: claude-3.5-sonnet
+    targets:
+      - {provider: easycli, model: claude-sonnet-4-6}
+      - {provider: easycli, model: gemini-3.7-flash-high}
+    cache: {mode: on, exact: true, ttl: 24h}
+  - name: gpt-4o
+    targets:
+      - {provider: easycli, model: claude-sonnet-4-6}
+      - {provider: easycli, model: gemini-3-flash}
+    cache: {mode: on, exact: true, ttl: 24h}
+  - name: gpt-4o-mini
+    targets:
+      - {provider: easycli, model: gemini-3-flash}
+    cache: {mode: on, exact: true, ttl: 24h}
+  - name: cursor-small
+    targets:
+      - {provider: easycli, model: gemini-3-flash}
+    cache: {mode: on, exact: true, ttl: 24h}
   - name: bench
     targets:
       - {provider: mock-bench, model: mock-small}
