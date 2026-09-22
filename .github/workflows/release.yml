@@ -31,7 +31,7 @@ jobs:
           build-args: VERSION=${{ github.ref_name }}
       - uses: sigstore/cosign-installer@d7d6bc7722e3ea1f7384f53f47d54429b0b23048 # v3.8.1
       - run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
-      - uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.17.9
+      - uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.17.9
         with: {image: "${{ env.IMAGE }}@${{ steps.build.outputs.digest }}", format: spdx-json, output-file: sbom.spdx.json}
       - run: cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${{ steps.build.outputs.digest }}"
       - uses: actions/attest-build-provenance@c074443f1a5fb4aee83904b71181049aa88b20e5 # v2.2.3
