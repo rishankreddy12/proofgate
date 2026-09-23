@@ -117,7 +117,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if rp := principal.Key.Run; rp != nil && runID != "" && p.d.Runs != nil && agentrun.RunIDPattern.MatchString(runID) {
 			fp := "mcp:" + name + ":" + tool + ":" + agentrun.Normalize(string(args))
-			res, err := p.d.Runs.Step(r.Context(), principal.TenantID, runID, rp.WithDefaults(), fp)
+			res, err := p.d.Runs.Step(r.Context(), principal.TenantID, runID, rp.WithDefaults(), fp, 0, 0)
 			if err == nil && res.Status != agentrun.Allowed {
 				refused = append(refused, ErrorMessage(m.ID, CodeRunLimit, "run limit reached or loop detected for run "+runID))
 				audit(m, tool, "run_limit", 200, start)

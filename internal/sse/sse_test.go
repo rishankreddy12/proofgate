@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/require"
 )
@@ -63,3 +64,23 @@ func TestEventIDAndRawWrite(t *testing.T) {
 	require.Equal(t, "id: 42\nevent: message\ndata: {}\n\n", rec.Body.String())
 }
 
+func TestReaderFragmentation(t *testing.T) {
+	in := "data: {\"test\":\"fragmentation\"}\n\ndata: [DONE]\n\n"
+	
+	// iotest.OneByteReader forces bufio.Reader to read exactly 1 byte per Read() call,
+	// perfectly simulating worst-case arbitrary TCP fragmentation across the network.
+	// This proves that bufio.Reader.ReadBytes('\n') handles TCP streams natively.
+	fragReader := iotest.OneByteReader(strings.NewReader(in))
+	r := NewReader(fragReader)
+	
+	e, err := r.Next()
+	require.NoError(t, err)
+	require.Equal(t, `{"test":"fragmentation"}`, string(e.Data))
+	
+	e, err = r.Next()
+	require.NoError(t, err)
+	require.Equal(t, "[DONE]", string(e.Data))
+	
+	_, err = r.Next()
+	require.ErrorIs(t, err, io.EOF)
+}

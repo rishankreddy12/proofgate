@@ -26,12 +26,12 @@ type StepResult struct {
 }
 
 type Store interface {
-	Step(ctx context.Context, tenantID, runID string, p store.RunPolicy, fingerprint string) (StepResult, error)
-	Charge(ctx context.Context, tenantID, runID string, p store.RunPolicy, micros int64, tokens int) error
+	Step(ctx context.Context, tenantID, runID string, p store.RunPolicy, fingerprint string, estCost int64, estTokens int) (StepResult, error)
+	Charge(ctx context.Context, tenantID, runID string, p store.RunPolicy, actualMicros int64, actualTokens int, reservedMicros int64, reservedTokens int) error
 }
 
 // stepScript: KEYS 1=run hash, 2=fingerprint list.
-// ARGV: max_steps, max_cost_micros, max_tokens, ttl_ms, fingerprint, loop_repeats, loop_window.
+// ARGV: max_steps, max_cost_micros, max_tokens, ttl_ms, fingerprint, loop_repeats, loop_window, est_cost, est_tokens
 var stepScript = redis.NewScript(`
 local steps = tonumber(redis.call('HGET', KEYS[1], 'steps') or '0')
 local cost = tonumber(redis.call('HGET', KEYS[1], 'cost') or '0')
@@ -52,6 +52,8 @@ if ARGV[5] ~= '' and tonumber(ARGV[6]) > 0 then
   redis.call('PEXPIRE', KEYS[2], ARGV[4])
 end
 redis.call('HINCRBY', KEYS[1], 'steps', 1)
+redis.call('HINCRBY', KEYS[1], 'cost', tonumber(ARGV[8]))
+redis.call('HINCRBY', KEYS[1], 'tokens', tonumber(ARGV[9]))
 redis.call('PEXPIRE', KEYS[1], ARGV[4])
 return {1, steps + 1, cost, tokens, repeats}
 `)
@@ -65,21 +67,29 @@ func keys(tenantID, runID string) (string, string) {
 	return "run:" + tag + ":" + runID, "runfp:" + tag + ":" + runID
 }
 
-func (s *RedisStore) Step(ctx context.Context, tenantID, runID string, p store.RunPolicy, fp string) (StepResult, error) {
+func (s *RedisStore) Step(ctx context.Context, tenantID, runID string, p store.RunPolicy, fp string, estCost int64, estTokens int) (StepResult, error) {
 	rk, fk := keys(tenantID, runID)
 	v, err := stepScript.Run(ctx, s.rdb, []string{rk, fk}, p.MaxSteps, p.CostMicros(), p.MaxTokens,
-		p.TTL.Milliseconds(), fp, p.LoopRepeats, p.LoopWindow).Int64Slice()
+		p.TTL.Milliseconds(), fp, p.LoopRepeats, p.LoopWindow, estCost, estTokens).Int64Slice()
 	if err != nil {
 		return StepResult{}, err
 	}
 	return StepResult{Status: StepStatus(v[0]), Steps: int(v[1]), CostMicros: v[2], Tokens: int(v[3]), Repeats: int(v[4])}, nil
 }
 
-func (s *RedisStore) Charge(ctx context.Context, tenantID, runID string, p store.RunPolicy, micros int64, tokens int) error {
+func (s *RedisStore) Charge(ctx context.Context, tenantID, runID string, p store.RunPolicy, actualMicros int64, actualTokens int, reservedMicros int64, reservedTokens int) error {
 	rk, _ := keys(tenantID, runID)
 	pipe := s.rdb.TxPipeline()
-	pipe.HIncrBy(ctx, rk, "cost", micros)
-	pipe.HIncrBy(ctx, rk, "tokens", int64(tokens))
+	
+	costDelta := actualMicros - reservedMicros
+	tokensDelta := actualTokens - reservedTokens
+	
+	if costDelta != 0 {
+		pipe.HIncrBy(ctx, rk, "cost", costDelta)
+	}
+	if tokensDelta != 0 {
+		pipe.HIncrBy(ctx, rk, "tokens", int64(tokensDelta))
+	}
 	pipe.PExpire(ctx, rk, p.TTL)
 	_, err := pipe.Exec(ctx)
 	return err

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/pipeline"
@@ -46,7 +47,8 @@ func (st *stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	if !RunIDPattern.MatchString(runID) {
 		return false, api.BadRequest("X-ProofGate-Run-Id must match " + RunIDPattern.String())
 	}
-	res, err := st.s.Step(ctx, c.Principal.TenantID, runID, p, Fingerprint(c.Request))
+	estTokens := c.Request.EstimatePromptTokens() + c.Request.EffectiveMaxTokens(8192)
+	res, err := st.s.Step(ctx, c.Principal.TenantID, runID, p, Fingerprint(c.Request), 0, estTokens)
 	if err != nil {
 		if c.Principal.Tenant.Strict {
 			return false, &api.Error{Status: 503, Message: "run store unavailable", Type: "api_error", Code: "run_store_unavailable"}
@@ -66,6 +68,7 @@ func (st *stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 			fmt.Sprintf("run %s repeated the same step %d times in its last %d steps", runID, res.Repeats, p.LoopWindow))
 	}
 	c.Values["run.id"] = runID
+	c.Values["run.est_tokens"] = estTokens
 	c.Header.Set("X-ProofGate-Run-Steps", strconv.Itoa(res.Steps))
 	if p.MaxCostUSD > 0 {
 		c.Header.Set("X-ProofGate-Run-Remaining-USD", fmt.Sprintf("%.6f", float64(p.CostMicros()-res.CostMicros)/1e6))
@@ -78,8 +81,13 @@ func (st *stage) After(ctx context.Context, c *pipeline.Call) {
 	if !ok {
 		return
 	}
+	reservedTokens, _ := c.Values["run.est_tokens"].(int)
+	actualTokens := c.Usage.TotalTokens
+	if strings.HasPrefix(c.CacheStatus, "hit") || (c.Err != nil && actualTokens == 0) {
+		actualTokens = 0
+	}
 	p := c.Principal.Key.Run.WithDefaults()
-	if err := st.s.Charge(context.WithoutCancel(ctx), c.Principal.TenantID, runID, p, c.CostMicros, c.Usage.TotalTokens); err != nil {
+	if err := st.s.Charge(context.WithoutCancel(ctx), c.Principal.TenantID, runID, p, c.CostMicros, actualTokens, 0, reservedTokens); err != nil {
 		slog.Warn("run charge failed", "run", runID, "err", err)
 	}
 }

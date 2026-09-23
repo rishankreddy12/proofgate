@@ -345,7 +345,15 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		slog.Warn("drain timed out", "err", err)
 	}
 	cacheStage.Wait()
-	_ = usage.Close(sctx)
-	_ = mcpAudit.Close(sctx)
-	return shutdownTracing(sctx)
+	
+	// Create a fresh context for final flush because the drain context might already be expired
+	fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer fcancel()
+	if err := usage.Close(fctx); err != nil {
+		slog.Warn("usage analytics close failed", "err", err)
+	}
+	if err := mcpAudit.Close(fctx); err != nil {
+		slog.Warn("mcp analytics close failed", "err", err)
+	}
+	return shutdownTracing(fctx)
 }

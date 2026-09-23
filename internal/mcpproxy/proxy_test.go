@@ -45,10 +45,10 @@ func fakeMCP(t *testing.T, calls *atomic.Int32) *httptest.Server {
 
 type nopRuns struct{ status agentrun.StepStatus }
 
-func (n nopRuns) Step(context.Context, string, string, store.RunPolicy, string) (agentrun.StepResult, error) {
+func (n nopRuns) Step(context.Context, string, string, store.RunPolicy, string, int64, int) (agentrun.StepResult, error) {
 	return agentrun.StepResult{Status: n.status}, nil
 }
-func (nopRuns) Charge(context.Context, string, string, store.RunPolicy, int64, int) error { return nil }
+func (nopRuns) Charge(context.Context, string, string, store.RunPolicy, int64, int, int64, int) error { return nil }
 
 func proxyServer(t *testing.T, upstream string, runs agentrun.Store, audits *[]Audit) *httptest.Server {
 	p := New(Deps{

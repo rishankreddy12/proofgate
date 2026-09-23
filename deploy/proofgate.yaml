@@ -24,11 +24,11 @@ pricing:
   mock-b/mock-large:   {input: 1.00, output: 4.00}
   mock-a/mock-embed:   {input: 0.02, output: 0}
   mock-bench/mock-small: {input: 0.10, output: 0.40}
-  # Free local proxy models
-  easycli/gemini-3-flash:         {input: 0.00, output: 0.00}
-  easycli/gemini-3.7-flash-high:  {input: 0.00, output: 0.00}
-  easycli/claude-sonnet-4-6:      {input: 0.00, output: 0.00}
-  easycli/claude-opus-4-6-thinking: {input: 0.00, output: 0.00}
+  # Local proxy models at $20
+  easycli/gemini-3-flash:         {input: 20.00, output: 20.00}
+  easycli/gemini-3.7-flash-high:  {input: 20.00, output: 20.00}
+  easycli/claude-sonnet-4-6:      {input: 20.00, output: 20.00}
+  easycli/claude-opus-4-6-thinking: {input: 20.00, output: 20.00}
 
 routes:
   - name: default

@@ -18,10 +18,10 @@ type fakeStore struct {
 	charged []int64
 }
 
-func (f *fakeStore) Step(context.Context, string, string, store.RunPolicy, string) (StepResult, error) {
+func (f *fakeStore) Step(context.Context, string, string, store.RunPolicy, string, int64, int) (StepResult, error) {
 	return f.next, nil
 }
-func (f *fakeStore) Charge(_ context.Context, _, _ string, _ store.RunPolicy, micros int64, _ int) error {
+func (f *fakeStore) Charge(_ context.Context, _, _ string, _ store.RunPolicy, micros int64, _ int, _ int64, _ int) error {
 	f.charged = append(f.charged, micros)
 	return nil
 }
