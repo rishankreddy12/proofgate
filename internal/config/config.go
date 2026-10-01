@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"regexp"
@@ -29,6 +30,32 @@ type ServerConfig struct {
 	ReadHeaderTimeout   time.Duration `yaml:"read_header_timeout"`
 	IdleTimeout         time.Duration `yaml:"idle_timeout"`
 	DrainTimeout        time.Duration `yaml:"drain_timeout"`
+	TrustedProxies      []string      `yaml:"trusted_proxies"`
+}
+
+func (s *ServerConfig) ParsedTrustedProxies() ([]*net.IPNet, error) {
+	var nets []*net.IPNet
+	for _, cidr := range s.TrustedProxies {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		if !strings.Contains(cidr, "/") {
+			if ip := net.ParseIP(cidr); ip != nil {
+				if ip.To4() != nil {
+					cidr += "/32"
+				} else {
+					cidr += "/128"
+				}
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted_proxy CIDR %q: %w", cidr, err)
+		}
+		nets = append(nets, ipNet)
+	}
+	return nets, nil
 }
 
 type DatabaseConfig struct {
@@ -205,12 +232,20 @@ type CapabilityConfig struct {
 	SupportsTools    *bool `yaml:"supports_tools"`
 }
 
+type AdminChatConfig struct {
+	RPM           int      `yaml:"rpm"`
+	TPM           int      `yaml:"tpm"`
+	BudgetUSD     float64  `yaml:"budget_usd"`
+	AllowedRoutes []string `yaml:"allowed_routes"`
+}
+
 type AdminAuthConfig struct {
-	Enabled            bool          `yaml:"enabled"`
-	MaxLoginAttempts   int           `yaml:"max_login_attempts"`
-	LockoutDuration    time.Duration `yaml:"lockout_duration"`
-	SessionIdleTimeout time.Duration `yaml:"session_idle_timeout"`
-	SessionAbsTimeout  time.Duration `yaml:"session_absolute_timeout"`
+	Enabled            bool            `yaml:"enabled"`
+	MaxLoginAttempts   int             `yaml:"max_login_attempts"`
+	LockoutDuration    time.Duration   `yaml:"lockout_duration"`
+	SessionIdleTimeout time.Duration   `yaml:"session_idle_timeout"`
+	SessionAbsTimeout  time.Duration   `yaml:"session_absolute_timeout"`
+	Chat               AdminChatConfig `yaml:"chat"`
 }
 
 type BudgetConfig struct {
@@ -412,6 +447,15 @@ func (c *Config) applyDefaults() {
 	if c.AdminAuth.SessionAbsTimeout == 0 {
 		c.AdminAuth.SessionAbsTimeout = 12 * time.Hour
 	}
+	if c.AdminAuth.Chat.RPM == 0 {
+		c.AdminAuth.Chat.RPM = 60
+	}
+	if c.AdminAuth.Chat.TPM == 0 {
+		c.AdminAuth.Chat.TPM = 100_000
+	}
+	if c.AdminAuth.Chat.BudgetUSD == 0 {
+		c.AdminAuth.Chat.BudgetUSD = 10.0
+	}
 	if c.Budget.Reserve == "" {
 		c.Budget.Reserve = "strict"
 	}
@@ -489,6 +533,9 @@ func (c *Config) validate() error {
 	}
 	if c.Server.IdleTimeout < 0 {
 		errs = append(errs, errors.New("server.idle_timeout must be >= 0"))
+	}
+	if _, err := c.Server.ParsedTrustedProxies(); err != nil {
+		errs = append(errs, fmt.Errorf("server.trusted_proxies: %w", err))
 	}
 	if c.Server.DrainTimeout < 0 {
 		errs = append(errs, errors.New("server.drain_timeout must be >= 0"))

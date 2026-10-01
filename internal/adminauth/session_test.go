@@ -158,3 +158,69 @@ func TestRevokeAllUserSessions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "user2", v3.Username)
 }
+
+func TestConcurrentValidateAndRevoke(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeStore()
+	mem := NewMemStore()
+	cfg := config.AdminAuthConfig{
+		MaxLoginAttempts:   5,
+		LockoutDuration:    15 * time.Minute,
+		SessionIdleTimeout: 10 * time.Minute,
+		SessionAbsTimeout:  1 * time.Hour,
+	}
+	svc := NewServiceWithStore(fs, mem, cfg, nil)
+	u := store.AdminUser{ID: "u-conc", Username: "concur", Role: "admin", Enabled: true}
+
+	for i := 0; i < 500; i++ {
+		token, sess, err := svc.CreateSession(ctx, u, "127.0.0.1", "test")
+		require.NoError(t, err)
+
+		done := make(chan struct{})
+		go func() {
+			for j := 0; j < 5; j++ {
+				_, _ = svc.ValidateSession(ctx, token)
+			}
+			close(done)
+		}()
+
+		_ = svc.RevokeSession(ctx, sess.ID)
+		<-done
+
+		// Crucial assertion: once revoked, session must NEVER be resurrected by ValidateSession touch
+		_, err = svc.ValidateSession(ctx, token)
+		require.ErrorIs(t, err, ErrSessionNotFound, "session %s resurrected after revocation", sess.ID)
+	}
+}
+
+func TestListSessionsIndependentOfUnrelatedKeys(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeStore()
+	mem := NewMemStore()
+	cfg := config.AdminAuthConfig{
+		MaxLoginAttempts:   5,
+		LockoutDuration:    15 * time.Minute,
+		SessionIdleTimeout: 10 * time.Minute,
+		SessionAbsTimeout:  1 * time.Hour,
+	}
+	svc := NewServiceWithStore(fs, mem, cfg, nil)
+	u := store.AdminUser{ID: "u-idx", Username: "indexed_user", Role: "operator", Enabled: true}
+
+	// Seed 10,000 unrelated keys into store
+	for i := 0; i < 10000; i++ {
+		_ = mem.Set(ctx, "unrelated:key:"+string(rune(i)), []byte("noise"), time.Hour)
+	}
+
+	// Create user sessions
+	t1, _, err := svc.CreateSession(ctx, u, "127.0.0.1", "test")
+	require.NoError(t, err)
+	t2, _, err := svc.CreateSession(ctx, u, "127.0.0.1", "test")
+	require.NoError(t, err)
+
+	sessions, err := svc.ListSessions(ctx, "indexed_user")
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+
+	require.NotEmpty(t, t1)
+	require.NotEmpty(t, t2)
+}

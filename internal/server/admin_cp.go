@@ -4,37 +4,78 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/proofgate/proofgate/internal/adminauth"
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/secrets"
 	"github.com/proofgate/proofgate/internal/store"
+	"github.com/proofgate/proofgate/internal/telemetry"
 	"github.com/proofgate/proofgate/internal/version"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
+// ControlPlaneStore defines the persistence operations needed by the control plane handlers.
+type ControlPlaneStore interface {
+	adminauth.AdminStore
+	ListAdminUsers(ctx context.Context) ([]store.AdminUser, error)
+	CreateAdminUser(ctx context.Context, username string, passwordHash []byte, role string) (store.AdminUser, error)
+	SetAdminUserEnabled(ctx context.Context, id string, enabled bool) error
+	DeleteAdminUser(ctx context.Context, id string) error
+	UpdateAdminUserPassword(ctx context.Context, id string, passwordHash []byte, mustChange bool) error
+	ActiveCredential(ctx context.Context, provider string) (secrets.Sealed, int, error)
+	PutCredential(ctx context.Context, provider string, sealed secrets.Sealed, actor string) (int, error)
+	ListCredentials(ctx context.Context) ([]store.CredentialInfo, error)
+}
 
 type ControlPlaneDeps struct {
-	State        *State
-	Store        *store.Store
-	Redis        *redis.Client
-	AuthService  *adminauth.Service
-	ReloadFunc   func() error
-	PurgeCache   http.HandlerFunc
-	PurgeSecrets func()
-	KEK          secrets.KEK
-	KeyCache     *secrets.KeyCache
-	HealthAdmin  http.HandlerFunc
-	Handlers     *Handlers
-	StartTime    time.Time
-	AdminAddr    string
-	ServerAddr   string
+	State          *State
+	Store          ControlPlaneStore
+	Redis          *redis.Client
+	AuthService    *adminauth.Service
+	ReloadFunc     func() error
+	PurgeCache     http.HandlerFunc
+	PurgeSecrets   func()
+	KEK            secrets.KEK
+	KeyCache       *secrets.KeyCache
+	HealthAdmin    http.HandlerFunc
+	ChatHandler    http.HandlerFunc
+	Handlers       *Handlers
+	StartTime      time.Time
+	AdminAddr      string
+	ServerAddr     string
+	Config         *config.Config
+	TrustedProxies []*net.IPNet
+	Metrics        *telemetry.Metrics
+}
+
+func (deps *ControlPlaneDeps) clientIP(r *http.Request) string {
+	var trusted []*net.IPNet
+	if len(deps.TrustedProxies) > 0 {
+		trusted = deps.TrustedProxies
+	} else if deps.Config != nil {
+		trusted, _ = deps.Config.Server.ParsedTrustedProxies()
+	} else if deps.State != nil {
+		if st := deps.State.Load(); st != nil && st.Config != nil {
+			trusted, _ = st.Config.Server.ParsedTrustedProxies()
+		}
+	}
+	return ClientIP(r, trusted)
+}
+
+func isPgUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return true
+	}
+	return false
 }
 
 func (deps *ControlPlaneDeps) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -80,11 +121,13 @@ func (deps *ControlPlaneDeps) handleGetConfig(w http.ResponseWriter, r *http.Req
 
 func (deps *ControlPlaneDeps) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	if err := deps.ReloadFunc(); err != nil {
 		if deps.Store != nil && sess != nil {
-			_ = deps.Store.RecordAdminAudit(r.Context(), sess.Username, "config.reload", "", map[string]any{"error": err.Error()}, ip, "error")
+			if aerr := deps.Store.RecordAdminAudit(r.Context(), sess.Username, "config.reload", "", map[string]any{"error": err.Error()}, ip, "error"); aerr != nil && deps.Metrics != nil {
+				deps.Metrics.AdminAuditFailures.Inc()
+			}
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error":   "reload_failed",
@@ -94,7 +137,9 @@ func (deps *ControlPlaneDeps) handleReloadConfig(w http.ResponseWriter, r *http.
 	}
 
 	if deps.Store != nil && sess != nil {
-		_ = deps.Store.RecordAdminAudit(r.Context(), sess.Username, "config.reload", "", nil, ip, "ok")
+		if aerr := deps.Store.RecordAdminAudit(r.Context(), sess.Username, "config.reload", "", nil, ip, "ok"); aerr != nil && deps.Metrics != nil {
+			deps.Metrics.AdminAuditFailures.Inc()
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -252,7 +297,7 @@ type SetCredentialRequest struct {
 func (deps *ControlPlaneDeps) handleSetCredential(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	var req SetCredentialRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.APIKey == "" {
@@ -325,7 +370,7 @@ func (deps *ControlPlaneDeps) handleListSessions(w http.ResponseWriter, r *http.
 func (deps *ControlPlaneDeps) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	if err := deps.AuthService.RevokeSession(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": err.Error()})
@@ -344,7 +389,7 @@ func (deps *ControlPlaneDeps) handleRevokeSession(w http.ResponseWriter, r *http
 
 func (deps *ControlPlaneDeps) handleRevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	userFilter := r.URL.Query().Get("user")
 	if sess != nil && sess.Role != "admin" {
@@ -377,7 +422,7 @@ type CreateUserRequest struct {
 
 func (deps *ControlPlaneDeps) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -387,6 +432,16 @@ func (deps *ControlPlaneDeps) handleCreateUser(w http.ResponseWriter, r *http.Re
 
 	if req.Username == "" || req.Password == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "username and password are required"})
+		return
+	}
+
+	if len(req.Username) > 64 || !adminauth.ValidateUsername(req.Username) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "username must be 1-64 characters matching [A-Za-z0-9._@-]"})
+		return
+	}
+
+	if err := adminauth.ValidatePassword(req.Password, req.Username); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": err.Error()})
 		return
 	}
 
@@ -406,7 +461,11 @@ func (deps *ControlPlaneDeps) handleCreateUser(w http.ResponseWriter, r *http.Re
 
 	u, err := deps.Store.CreateAdminUser(r.Context(), req.Username, pwHash, req.Role)
 	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "conflict", "message": err.Error()})
+		if isPgUniqueViolation(err) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "conflict", "message": "user already exists"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": "failed to create user"})
 		return
 	}
 
@@ -448,7 +507,7 @@ type SetUserEnabledRequest struct {
 func (deps *ControlPlaneDeps) handleSetUserEnabled(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	var req SetUserEnabledRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -463,11 +522,15 @@ func (deps *ControlPlaneDeps) handleSetUserEnabled(w http.ResponseWriter, r *htt
 	}
 
 	if err := deps.Store.SetAdminUserEnabled(r.Context(), u.ID, req.Enabled); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": err.Error()})
+		if errors.Is(err, store.ErrLastAdmin) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "conflict", "message": "cannot disable the last enabled admin"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": "failed to update user status"})
 		return
 	}
 
-	if !req.Enabled {
+	if !req.Enabled && deps.AuthService != nil {
 		_, _ = deps.AuthService.RevokeAllUserSessions(r.Context(), username)
 	}
 
@@ -486,7 +549,7 @@ func (deps *ControlPlaneDeps) handleSetUserEnabled(w http.ResponseWriter, r *htt
 func (deps *ControlPlaneDeps) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	u, err := deps.Store.GetAdminUser(r.Context(), username)
 	if err != nil {
@@ -494,12 +557,18 @@ func (deps *ControlPlaneDeps) handleDeleteUser(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Revoke sessions first
-	_, _ = deps.AuthService.RevokeAllUserSessions(r.Context(), username)
-
 	if err := deps.Store.DeleteAdminUser(r.Context(), u.ID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": err.Error()})
+		if errors.Is(err, store.ErrLastAdmin) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "conflict", "message": "cannot delete the last enabled admin"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": "failed to delete user"})
 		return
+	}
+
+	// Revoke sessions after successful deletion
+	if deps.AuthService != nil {
+		_, _ = deps.AuthService.RevokeAllUserSessions(r.Context(), username)
 	}
 
 	actor := "admin"
@@ -518,7 +587,7 @@ type ChangePasswordRequest struct {
 func (deps *ControlPlaneDeps) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	if sess == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized", "message": "not authenticated"})
@@ -545,11 +614,21 @@ func (deps *ControlPlaneDeps) handleChangePassword(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if isSelf && !isAdmin {
+	// Always require old password for self-service, even for admins
+	if isSelf {
+		if req.OldPassword == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "old_password is required"})
+			return
+		}
 		if err := adminauth.CheckPassword(u.PasswordHash, req.OldPassword); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "incorrect old password"})
 			return
 		}
+	}
+
+	if err := adminauth.ValidatePassword(req.NewPassword, username); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": err.Error()})
+		return
 	}
 
 	newHash, err := adminauth.HashPassword(req.NewPassword)
@@ -558,23 +637,31 @@ func (deps *ControlPlaneDeps) handleChangePassword(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if err := deps.Store.UpdateAdminUserPassword(r.Context(), u.ID, newHash); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": err.Error()})
+	mustChange := !isSelf && isAdmin
+	if err := deps.Store.UpdateAdminUserPassword(r.Context(), u.ID, newHash, mustChange); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": "failed to update password"})
 		return
 	}
 
-	_ = deps.Store.RecordAdminAudit(r.Context(), sess.Username, "user.change_password", username, map[string]any{"self": isSelf}, ip, "ok")
+	// Revoke active sessions for target user
+	if deps.AuthService != nil {
+		_, _ = deps.AuthService.RevokeAllUserSessions(r.Context(), username)
+	}
+
+	_ = deps.Store.RecordAdminAudit(r.Context(), sess.Username, "user.change_password", username, map[string]any{"self": isSelf, "must_change": mustChange}, ip, "ok")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (deps *ControlPlaneDeps) handleCachePurge(w http.ResponseWriter, r *http.Request) {
 	sess := adminauth.GetAdminPrincipal(r.Context())
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 
 	deps.PurgeCache(w, r)
 
 	if deps.Store != nil && sess != nil {
-		_ = deps.Store.RecordAdminAudit(r.Context(), sess.Username, "cache.purge", "", nil, ip, "ok")
+		if aerr := deps.Store.RecordAdminAudit(r.Context(), sess.Username, "cache.purge", "", nil, ip, "ok"); aerr != nil && deps.Metrics != nil {
+			deps.Metrics.AdminAuditFailures.Inc()
+		}
 	}
 }
 
@@ -656,13 +743,11 @@ func RegisterAdminRoutes(admin *http.ServeMux, deps *ControlPlaneDeps, authEnabl
 	admin.Handle("POST /admin/reload", wrapPerm(adminauth.PermConfigReload, deps.handleReloadConfig))
 
 	// 6. Interactive Chat endpoint
-	if deps.Handlers != nil {
-		admin.Handle("POST /admin/cp/chat", wrapPerm(adminauth.PermStatusView, deps.handleChat))
-	}
+	admin.Handle("POST /admin/cp/chat", wrapPerm(adminauth.PermChatTest, deps.handleChat))
 }
 
 func (deps *ControlPlaneDeps) handleChat(w http.ResponseWriter, r *http.Request) {
-	if deps.Handlers == nil {
+	if deps.Handlers == nil && deps.ChatHandler == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error":   "service_unavailable",
 			"message": "chat handler not initialized",
@@ -674,12 +759,47 @@ func (deps *ControlPlaneDeps) handleChat(w http.ResponseWriter, r *http.Request)
 	if sess != nil && sess.Username != "" {
 		actor = sess.Username
 	}
+
+	var chatCfg config.AdminChatConfig
+	if deps.Config != nil {
+		chatCfg = deps.Config.AdminAuth.Chat
+	} else if deps.State != nil {
+		if st := deps.State.Load(); st != nil && st.Config != nil {
+			chatCfg = st.Config.AdminAuth.Chat
+		}
+	}
+	rpm := chatCfg.RPM
+	if rpm == 0 {
+		rpm = 60
+	}
+	tpm := chatCfg.TPM
+	if tpm == 0 {
+		tpm = 100_000
+	}
+
 	p := auth.Principal{
-		TenantID:    "control-plane",
-		TenantName:  "admin",
-		KeyName:     "admin-" + actor,
-		AllowDirect: true,
+		TenantID:      "control-plane",
+		TenantName:    "admin",
+		KeyName:       "cp:" + actor,
+		AllowDirect:   false,
+		AllowedRoutes: chatCfg.AllowedRoutes,
+		Tenant: store.TenantPolicy{
+			RPM:              rpm,
+			TPM:              tpm,
+			MonthlyBudgetUSD: chatCfg.BudgetUSD,
+		},
+		Key: store.KeyPolicy{
+			AllowDirect: false,
+		},
 	}
 	r = r.WithContext(auth.WithPrincipal(r.Context(), p))
-	deps.Handlers.Chat(w, r)
+	if deps.ChatHandler != nil {
+		deps.ChatHandler(w, r)
+		return
+	}
+	if deps.Handlers != nil {
+		deps.Handlers.Chat(w, r)
+		return
+	}
+	writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "not_implemented", "message": "chat handler not configured"})
 }

@@ -375,6 +375,8 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		StartTime:   startTime,
 		AdminAddr:   cfg.Server.AdminAddr,
 		ServerAddr:  cfg.Server.Addr,
+		Config:      cfg,
+		Metrics:     metrics,
 	}
 	server.RegisterAdminRoutes(admin, cpDeps, cfg.AdminAuth.Enabled)
 	adminSrv := &http.Server{Addr: cfg.Server.AdminAddr, Handler: admin, ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout}

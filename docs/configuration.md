@@ -44,6 +44,7 @@ Controls bind addresses for client traffic and management APIs.
 | `read_header_timeout` | duration | `10s` | Maximum time allowed to read HTTP request headers before closing connection. |
 | `idle_timeout` | duration | `120s` | Maximum time to keep idle keep-alive HTTP connections open. |
 | `drain_timeout` | duration | `30s` | Graceful shutdown drain timeout for in-flight requests. |
+| `trusted_proxies` | list of strings | `[]` | List of trusted reverse proxy CIDRs or IP addresses for client IP extraction from `X-Forwarded-For`. |
 
 ```yaml
 server:
@@ -53,6 +54,9 @@ server:
   read_header_timeout: 10s
   idle_timeout: 120s
   drain_timeout: 30s
+  trusted_proxies:
+    - "127.0.0.1/32"
+    - "10.0.0.0/8"
 ```
 
 ---
@@ -206,6 +210,11 @@ Controls authentication, session management, and rate limiting for the administr
 | `lockout_duration` | duration | `15m` | Lockout duration after exceeding maximum login attempts. |
 | `session_idle_timeout` | duration | `30m` | Session inactivity timeout before requiring re-authentication. |
 | `session_absolute_timeout` | duration | `12h` | Maximum total lifetime of an administrative session. |
+| `chat` | object | - | Resource limits and routing controls for administrative interactive chat playground (`POST /admin/cp/chat`). |
+| `rpm` | integer | `60` | Maximum requests per minute admitted for administrative chat sessions. |
+| `tpm` | integer | `100000` | Maximum tokens per minute admitted for administrative chat sessions. |
+| `budget_usd` | float | `10.0` | Monthly spending ceiling in USD for administrative chat testing. |
+| `allowed_routes` | list of strings | `[]` | Specific routes permitted for administrative playground calls (empty allows all). |
 
 ```yaml
 admin_auth:
@@ -214,6 +223,12 @@ admin_auth:
   lockout_duration: 15m
   session_idle_timeout: 30m
   session_absolute_timeout: 12h
+  chat:
+    rpm: 60
+    tpm: 100000
+    budget_usd: 10.0
+    allowed_routes:
+      - "default"
 ```
 
 ---

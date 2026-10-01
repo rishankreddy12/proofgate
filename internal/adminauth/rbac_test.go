@@ -16,6 +16,7 @@ func TestRBAC(t *testing.T) {
 	require.True(t, HasPermission("admin", PermSessionManage))
 	require.True(t, HasPermission("admin", PermHealthView))
 	require.True(t, HasPermission("admin", PermStatusView))
+	require.True(t, HasPermission("admin", PermChatTest))
 
 	// Operator has operational permissions, but NOT user/session manage
 	require.False(t, HasPermission("operator", PermUserManage))
@@ -26,6 +27,7 @@ func TestRBAC(t *testing.T) {
 	require.True(t, HasPermission("operator", PermCachePurge))
 	require.True(t, HasPermission("operator", PermHealthView))
 	require.True(t, HasPermission("operator", PermStatusView))
+	require.True(t, HasPermission("operator", PermChatTest))
 
 	// Viewer is read-only
 	require.False(t, HasPermission("viewer", PermUserManage))
@@ -33,6 +35,7 @@ func TestRBAC(t *testing.T) {
 	require.False(t, HasPermission("viewer", PermConfigReload))
 	require.False(t, HasPermission("viewer", PermCachePurge))
 	require.False(t, HasPermission("viewer", PermSessionManage))
+	require.False(t, HasPermission("viewer", PermChatTest))
 	require.True(t, HasPermission("viewer", PermConfigView))
 	require.True(t, HasPermission("viewer", PermHealthView))
 	require.True(t, HasPermission("viewer", PermStatusView))

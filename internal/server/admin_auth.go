@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,19 +33,6 @@ type WhoamiResponse struct {
 	LastActiveAt time.Time `json:"last_active_at"`
 }
 
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
-}
-
 func (deps *ControlPlaneDeps) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -65,11 +51,34 @@ func (deps *ControlPlaneDeps) handleLogin(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ip := clientIP(r)
+	if !adminauth.ValidateUsername(req.Username) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error":   "unauthorized",
+			"message": "invalid credentials",
+		})
+		return
+	}
+
+	ip := deps.clientIP(r)
 	token, sess, err := deps.AuthService.Login(r.Context(), req.Username, req.Password, ip, r.UserAgent())
 	if err != nil {
+		if errors.Is(err, adminauth.ErrIPRateLimited) {
+			_, ttl, _ := deps.AuthService.CheckIPLockout(r.Context(), ip)
+			if ttl > 0 {
+				secs := int(math.Ceil(ttl.Seconds()))
+				if secs < 1 {
+					secs = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(secs))
+			}
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{
+				"error":   "rate_limited",
+				"message": "too many failed login attempts from this IP",
+			})
+			return
+		}
 		if errors.Is(err, adminauth.ErrAccountLocked) {
-			_, ttl, _ := deps.AuthService.CheckLoginLockout(r.Context(), req.Username)
+			_, ttl, _ := deps.AuthService.CheckLoginLockout(r.Context(), req.Username, ip)
 			if ttl > 0 {
 				secs := int(math.Ceil(ttl.Seconds()))
 				if secs < 1 {
@@ -83,17 +92,10 @@ func (deps *ControlPlaneDeps) handleLogin(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
-		if errors.Is(err, adminauth.ErrAccountDisabled) {
-			writeJSON(w, http.StatusForbidden, map[string]string{
-				"error":   "forbidden",
-				"message": "account is disabled",
-			})
-			return
-		}
-		if errors.Is(err, adminauth.ErrInvalidCredentials) {
+		if errors.Is(err, adminauth.ErrInvalidCredentials) || errors.Is(err, adminauth.ErrAccountDisabled) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{
 				"error":   "unauthorized",
-				"message": "invalid username or password",
+				"message": "invalid credentials",
 			})
 			return
 		}
@@ -104,12 +106,16 @@ func (deps *ControlPlaneDeps) handleLogin(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	absTimeout := deps.AuthService.AbsTimeout()
+	if absTimeout == 0 {
+		absTimeout = 12 * time.Hour
+	}
 	writeJSON(w, http.StatusOK, LoginResponse{
 		Token:     token,
 		UserID:    sess.UserID,
 		Username:  sess.Username,
 		Role:      sess.Role,
-		ExpiresAt: sess.CreatedAt.Add(12 * time.Hour),
+		ExpiresAt: sess.CreatedAt.Add(absTimeout),
 	})
 }
 
@@ -121,7 +127,7 @@ func (deps *ControlPlaneDeps) handleLogout(w http.ResponseWriter, r *http.Reques
 		token = strings.TrimSpace(parts[1])
 	}
 
-	ip := clientIP(r)
+	ip := deps.clientIP(r)
 	if err := deps.AuthService.Logout(r.Context(), token, ip); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error":   "bad_request",

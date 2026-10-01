@@ -51,13 +51,26 @@ func TestAdminUsersAndAudit(t *testing.T) {
 
 	// Update password
 	newHash := []byte("$2a$12$newhashforpassword123456789012345678901234567890")
-	err = s.UpdateAdminUserPassword(ctx, u.ID, newHash)
+	err = s.UpdateAdminUserPassword(ctx, u.ID, newHash, false)
 	require.NoError(t, err)
 	byUser, err = s.GetAdminUser(ctx, "admin1")
 	require.NoError(t, err)
 	require.Equal(t, newHash, byUser.PasswordHash)
+	require.False(t, byUser.MustChange)
 
-	// Disable user
+	// Attempting to disable the only enabled admin must fail with ErrLastAdmin
+	err = s.SetAdminUserEnabled(ctx, u.ID, false)
+	require.ErrorIs(t, err, ErrLastAdmin)
+
+	// Attempting to delete the only enabled admin must fail with ErrLastAdmin
+	err = s.DeleteAdminUser(ctx, u.ID)
+	require.ErrorIs(t, err, ErrLastAdmin)
+
+	// Create second admin
+	u2, err := s.CreateAdminUser(ctx, "admin2", pwHash, "admin")
+	require.NoError(t, err)
+
+	// Now disabling admin1 succeeds because admin2 is enabled
 	err = s.SetAdminUserEnabled(ctx, u.ID, false)
 	require.NoError(t, err)
 	byUser, err = s.GetAdminUser(ctx, "admin1")
@@ -76,13 +89,17 @@ func TestAdminUsersAndAudit(t *testing.T) {
 	require.Equal(t, u.ID, events[0].Target)
 	require.Equal(t, "ok", events[0].Result)
 
-	// Delete user
+	// Now deleting admin1 succeeds
 	err = s.DeleteAdminUser(ctx, u.ID)
 	require.NoError(t, err)
 	_, err = s.GetAdminUser(ctx, "admin1")
 	require.ErrorIs(t, err, ErrNotFound)
 
+	// Deleting admin2 (last admin) must fail
+	err = s.DeleteAdminUser(ctx, u2.ID)
+	require.ErrorIs(t, err, ErrLastAdmin)
+
 	count, err = s.AdminUserCount(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 0, count)
+	require.Equal(t, 1, count)
 }

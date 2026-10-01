@@ -3,6 +3,7 @@ package adminauth
 import (
 	"context"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,14 +12,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// SessionStore defines the storage backend for session state and rate limiting.
+// SessionStore defines the storage backend for session state, rate limiting, and user indexing.
 type SessionStore interface {
 	Set(ctx context.Context, key string, val []byte, ttl time.Duration) error
+	SetXX(ctx context.Context, key string, val []byte, ttl time.Duration) (bool, error)
 	Get(ctx context.Context, key string) ([]byte, error)
 	Del(ctx context.Context, keys ...string) error
-	Scan(ctx context.Context, match string) ([]string, error)
 	IncrWithTTL(ctx context.Context, key string, ttl time.Duration) (int64, error)
 	GetWithTTL(ctx context.Context, key string) (int64, time.Duration, error)
+	SAdd(ctx context.Context, key string, members ...string) error
+	SRem(ctx context.Context, key string, members ...string) error
+	SMembers(ctx context.Context, key string) ([]string, error)
+	Scan(ctx context.Context, match string) ([]string, error)
 }
 
 // RedisStore implements SessionStore backed by Redis.
@@ -32,6 +37,10 @@ func NewRedisStore(rdb redis.Cmdable) *RedisStore {
 
 func (r *RedisStore) Set(ctx context.Context, key string, val []byte, ttl time.Duration) error {
 	return r.rdb.Set(ctx, key, val, ttl).Err()
+}
+
+func (r *RedisStore) SetXX(ctx context.Context, key string, val []byte, ttl time.Duration) (bool, error) {
+	return r.rdb.SetXX(ctx, key, val, ttl).Result()
 }
 
 func (r *RedisStore) Get(ctx context.Context, key string) ([]byte, error) {
@@ -66,15 +75,25 @@ func (r *RedisStore) Scan(ctx context.Context, match string) ([]string, error) {
 	return result, nil
 }
 
+// Atomic Lua script: INCR; set EXPIRE if first hit OR if TTL is missing (self-heals old keys)
+var incrWithTTLScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+if n == 1 or redis.call('TTL', KEYS[1]) < 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return n
+`)
+
 func (r *RedisStore) IncrWithTTL(ctx context.Context, key string, ttl time.Duration) (int64, error) {
-	val, err := r.rdb.Incr(ctx, key).Result()
+	secs := int64(math.Ceil(ttl.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	res, err := incrWithTTLScript.Run(ctx, r.rdb, []string{key}, secs).Int64()
 	if err != nil {
 		return 0, err
 	}
-	if val == 1 {
-		_ = r.rdb.Expire(ctx, key, ttl).Err()
-	}
-	return val, nil
+	return res, nil
 }
 
 func (r *RedisStore) GetWithTTL(ctx context.Context, key string) (int64, time.Duration, error) {
@@ -93,10 +112,37 @@ func (r *RedisStore) GetWithTTL(ctx context.Context, key string) (int64, time.Du
 	return n, ttl, nil
 }
 
-// MemStore is an in-memory implementation of SessionStore used for fast, deterministic unit testing.
+func (r *RedisStore) SAdd(ctx context.Context, key string, members ...string) error {
+	if len(members) == 0 {
+		return nil
+	}
+	args := make([]any, len(members))
+	for i, m := range members {
+		args[i] = m
+	}
+	return r.rdb.SAdd(ctx, key, args...).Err()
+}
+
+func (r *RedisStore) SRem(ctx context.Context, key string, members ...string) error {
+	if len(members) == 0 {
+		return nil
+	}
+	args := make([]any, len(members))
+	for i, m := range members {
+		args[i] = m
+	}
+	return r.rdb.SRem(ctx, key, args...).Err()
+}
+
+func (r *RedisStore) SMembers(ctx context.Context, key string) ([]string, error) {
+	return r.rdb.SMembers(ctx, key).Result()
+}
+
+// MemStore is an in-memory implementation of SessionStore used for fast, deterministic testing.
 type MemStore struct {
 	mu   sync.Mutex
 	data map[string]memItem
+	sets map[string]map[string]struct{}
 }
 
 type memItem struct {
@@ -107,6 +153,7 @@ type memItem struct {
 func NewMemStore() *MemStore {
 	return &MemStore{
 		data: make(map[string]memItem),
+		sets: make(map[string]map[string]struct{}),
 	}
 }
 
@@ -118,6 +165,22 @@ func (m *MemStore) Set(ctx context.Context, key string, val []byte, ttl time.Dur
 		expiresAt: time.Now().Add(ttl),
 	}
 	return nil
+}
+
+func (m *MemStore) SetXX(ctx context.Context, key string, val []byte, ttl time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item, ok := m.data[key]
+	now := time.Now()
+	if !ok || now.After(item.expiresAt) {
+		delete(m.data, key)
+		return false, nil
+	}
+	m.data[key] = memItem{
+		val:       val,
+		expiresAt: now.Add(ttl),
+	}
+	return true, nil
 }
 
 func (m *MemStore) Get(ctx context.Context, key string) ([]byte, error) {
@@ -136,6 +199,7 @@ func (m *MemStore) Del(ctx context.Context, keys ...string) error {
 	defer m.mu.Unlock()
 	for _, k := range keys {
 		delete(m.data, k)
+		delete(m.sets, k)
 	}
 	return nil
 }
@@ -192,4 +256,45 @@ func (m *MemStore) GetWithTTL(ctx context.Context, key string) (int64, time.Dura
 	}
 	c, _ := strconv.ParseInt(string(item.val), 10, 64)
 	return c, item.expiresAt.Sub(now), nil
+}
+
+func (m *MemStore) SAdd(ctx context.Context, key string, members ...string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sets[key]
+	if !ok {
+		s = make(map[string]struct{})
+		m.sets[key] = s
+	}
+	for _, mem := range members {
+		s[mem] = struct{}{}
+	}
+	return nil
+}
+
+func (m *MemStore) SRem(ctx context.Context, key string, members ...string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sets[key]
+	if !ok {
+		return nil
+	}
+	for _, mem := range members {
+		delete(s, mem)
+	}
+	return nil
+}
+
+func (m *MemStore) SMembers(ctx context.Context, key string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sets[key]
+	if !ok {
+		return nil, nil
+	}
+	out := make([]string, 0, len(s))
+	for mem := range s {
+		out = append(out, mem)
+	}
+	return out, nil
 }

@@ -81,5 +81,8 @@ func TestLoginDisabledUser(t *testing.T) {
 	}
 
 	_, _, err := svc.Login(ctx, "disabled_user", "pass123", "127.0.0.1", "agent")
-	require.ErrorIs(t, err, ErrAccountDisabled)
+	require.ErrorIs(t, err, ErrInvalidCredentials)
+	require.NotEmpty(t, fs.audit)
+	lastAudit := fs.audit[len(fs.audit)-1]
+	require.Equal(t, "login_failed", lastAudit.Action)
 }

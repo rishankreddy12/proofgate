@@ -142,6 +142,9 @@ func main() {
 		if *username == "" {
 			die("--username is required")
 		}
+		if !adminauth.ValidateUsername(*username) {
+			die("invalid username: must be 1-64 characters matching [A-Za-z0-9._@-]")
+		}
 
 		count, err := st.AdminUserCount(ctx)
 		if err != nil {
@@ -154,6 +157,9 @@ func main() {
 		pw1, err := readPassword("Enter password for initial admin user: ")
 		if err != nil || pw1 == "" {
 			die("password is required")
+		}
+		if err := adminauth.ValidatePassword(pw1, *username); err != nil {
+			die("invalid password: %v", err)
 		}
 		pw2, err := readPassword("Confirm password: ")
 		if err != nil || pw2 != pw1 {

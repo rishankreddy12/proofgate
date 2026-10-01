@@ -11,11 +11,12 @@ const (
 	PermSessionManage  Permission = "session:manage"
 	PermHealthView     Permission = "health:view"
 	PermStatusView     Permission = "status:view"
+	PermChatTest       Permission = "chat:test"
 )
 
 var rolePermissions = map[string][]Permission{
-	"admin":    {PermUserManage, PermProviderManage, PermConfigReload, PermConfigView, PermCachePurge, PermSessionManage, PermHealthView, PermStatusView},
-	"operator": {PermProviderManage, PermConfigReload, PermConfigView, PermCachePurge, PermHealthView, PermStatusView},
+	"admin":    {PermUserManage, PermProviderManage, PermConfigReload, PermConfigView, PermCachePurge, PermSessionManage, PermHealthView, PermStatusView, PermChatTest},
+	"operator": {PermProviderManage, PermConfigReload, PermConfigView, PermCachePurge, PermHealthView, PermStatusView, PermChatTest},
 	"viewer":   {PermConfigView, PermHealthView, PermStatusView},
 }
 
