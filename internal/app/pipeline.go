@@ -3,15 +3,17 @@
 package app
 
 import (
+	"time"
+
 	"github.com/proofgate/proofgate/internal/agentrun"
 	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/budget"
 	"github.com/proofgate/proofgate/internal/cache"
+	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/guard"
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/telemetry"
-	"time"
 )
 
 // Deps bundles the concrete dependencies that each pipeline stage needs.
@@ -27,6 +29,8 @@ type Deps struct {
 	MaxTokReserve  int
 	FailOpenInc    func()
 	Ledger         budget.Ledger
+	Pricing        *budget.Pricing
+	BudgetCfg      config.BudgetConfig
 }
 
 // StageOrder defines the canonical pipeline stage names in execution order.
@@ -37,10 +41,10 @@ var StageOrder = []string{
 	"trace",
 	"usage",
 	"agentrun",
-	"guard",
-	"cache",
 	"ratelimit",
 	"budget",
+	"guard",
+	"cache",
 }
 
 // BuildPipeline constructs the production pipeline with the canonical stage order.
@@ -50,10 +54,15 @@ func BuildPipeline(d Deps) *pipeline.Pipeline {
 		d.Metrics.Stage(),
 		telemetry.TraceStage(),
 		analytics.UsageStage(d.UsageEmit),
-		agentrun.NewStageWithDefaults(d.Runs, d.DefaultMaxToks, d.FuzzyDetector),
+		agentrun.NewStageWithLimiter(d.Runs, d.DefaultMaxToks, d.Limiter, d.FuzzyDetector),
+		ratelimit.NewStage(d.Limiter, d.MaxTokReserve, d.DefaultMaxToks, d.FailOpenInc),
+		budget.NewStage(d.Ledger, time.Now, budget.StageOpts{
+			Pricing:        d.Pricing,
+			ReserveStrict:  d.BudgetCfg.IsReserveStrict(),
+			RequirePricing: d.BudgetCfg.IsRequirePricing(),
+			DefaultMax:     d.DefaultMaxToks,
+		}),
 		guard.NewStage(),
 		d.CacheStage,
-		ratelimit.NewStage(d.Limiter, d.MaxTokReserve, d.DefaultMaxToks, d.FailOpenInc),
-		budget.NewStage(d.Ledger, time.Now),
 	)
 }

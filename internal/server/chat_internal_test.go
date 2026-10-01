@@ -28,6 +28,19 @@ func (m *memLedger) Add(_ context.Context, tenantID, month string, micros int64)
 	return nil
 }
 
+func (m *memLedger) Reserve(_ context.Context, tenantID, month string, est, limit int64) (bool, int64, error) {
+	if m.spent == nil {
+		m.spent = make(map[string]int64)
+	}
+	k := tenantID + ":" + month
+	cur := m.spent[k]
+	if cur+est > limit {
+		return false, cur, nil
+	}
+	m.spent[k] = cur + est
+	return true, cur + est, nil
+}
+
 func TestChatInternal(t *testing.T) {
 	var events []analytics.UsageEvent
 	ledger := &memLedger{spent: make(map[string]int64)}

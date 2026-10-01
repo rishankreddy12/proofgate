@@ -177,6 +177,9 @@ type noopLedger struct{}
 
 func (noopLedger) Spent(_ context.Context, _, _ string) (int64, error) { return 0, nil }
 func (noopLedger) Add(_ context.Context, _, _ string, _ int64) error   { return nil }
+func (noopLedger) Reserve(_ context.Context, _, _ string, est, _ int64) (bool, int64, error) {
+	return true, est, nil
+}
 
 // TestSpoofedInternalHeaderCannotBypassRateLimiter tests C1: an external client sending
 // X-ProofGate-Internal: true cannot bypass rate limiting, and causes the spoof detection metric to increment.

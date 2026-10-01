@@ -227,6 +227,8 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		MaxTokReserve:  cfg.Defaults.MaxTokensReserve,
 		FailOpenInc:    metrics.FailOpen.Inc,
 		Ledger:         ledger,
+		Pricing:        rt.Pricing,
+		BudgetCfg:      cfg.Budget,
 	})
 	h = &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now, Health: tracker, Metrics: metrics,
 		MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,

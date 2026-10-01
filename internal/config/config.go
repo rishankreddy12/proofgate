@@ -211,6 +211,22 @@ type AdminAuthConfig struct {
 	SessionAbsTimeout  time.Duration `yaml:"session_absolute_timeout"`
 }
 
+type BudgetConfig struct {
+	Reserve        string `yaml:"reserve"`         // "strict" | "off", default "strict"
+	RequirePricing *bool  `yaml:"require_pricing"` // default true
+}
+
+func (b BudgetConfig) IsReserveStrict() bool {
+	return strings.ToLower(b.Reserve) != "off"
+}
+
+func (b BudgetConfig) IsRequirePricing() bool {
+	if b.RequirePricing == nil {
+		return true
+	}
+	return *b.RequirePricing
+}
+
 type Config struct {
 	Server           ServerConfig                `yaml:"server"`
 	Database         DatabaseConfig              `yaml:"database"`
@@ -223,6 +239,7 @@ type Config struct {
 	MCP              MCPProxyConfig              `yaml:"mcp"`
 	Providers        []ProviderConfig            `yaml:"providers"`
 	Pricing          map[string]Price            `yaml:"pricing"`
+	Budget           BudgetConfig                `yaml:"budget"`
 	Routes           []RouteConfig               `yaml:"routes"`
 	Capabilities     map[string]CapabilityConfig `yaml:"capabilities"`
 	Defaults         Defaults                    `yaml:"defaults"`
@@ -387,6 +404,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.AdminAuth.SessionAbsTimeout == 0 {
 		c.AdminAuth.SessionAbsTimeout = 12 * time.Hour
+	}
+	if c.Budget.Reserve == "" {
+		c.Budget.Reserve = "strict"
 	}
 	for i := range c.Routes {
 		r := &c.Routes[i]

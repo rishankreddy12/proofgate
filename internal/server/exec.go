@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,6 +14,22 @@ import (
 	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/proofgate/proofgate/internal/router"
 )
+
+var (
+	unpricedLogMu  sync.Mutex
+	unpricedLogged = make(map[string]time.Time)
+)
+
+func logUnpricedTarget(target string) {
+	unpricedLogMu.Lock()
+	defer unpricedLogMu.Unlock()
+	last, ok := unpricedLogged[target]
+	now := time.Now()
+	if !ok || now.Sub(last) > time.Hour {
+		unpricedLogged[target] = now
+		slog.Warn("call to unpriced target", "target", target)
+	}
+}
 
 func outcome(err error) health.Outcome {
 	var pe *provider.Error
@@ -63,6 +81,15 @@ func price(rt *Runtime, c *pipeline.Call, completionText string) {
 		c.CostMicros = cost
 	} else {
 		c.Values["cost.unpriced"] = true
+		logUnpricedTarget(c.Target.String())
+		if c.Principal.Tenant.BudgetMicros() > 0 && rt.Config != nil && rt.Config.Budget.IsRequirePricing() && c.Err == nil {
+			c.Err = &api.Error{
+				Status:  500,
+				Message: "target pricing unconfigured",
+				Type:    "api_error",
+				Code:    "unpriced_target",
+			}
+		}
 	}
 }
 

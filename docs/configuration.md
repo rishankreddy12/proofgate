@@ -18,6 +18,7 @@ A canonical `proofgate.yaml` is composed of the following top-level blocks:
 - `secrets`: Zero-trust Key Encryption Key (KEK) and Vault configuration.
 - `providers`: Upstream LLM backend definitions.
 - `pricing`: Model cost rates per 1M tokens.
+- `budget`: Monthly tenant budget reservation and enforcement settings.
 - `routes`: Virtual routing topologies, fallback strategies, caching, and guardrails.
 - `defaults`: Global system fallback limits.
 - `slos`: Target Service Level Objectives for health and hedging.
@@ -212,6 +213,24 @@ admin_auth:
   lockout_duration: 15m
   session_idle_timeout: 30m
   session_absolute_timeout: 12h
+```
+
+---
+
+## 2.9 Budget Enforcement (`budget`)
+
+Controls atomic budget reservation and pricing requirements for tenant spend limits.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `budget` | object | - | Monthly tenant budget enforcement configuration. |
+| `reserve` | string | `"strict"` | Reservation mode (`"strict"` for atomic pre-allocation before upstream calls, `"off"` for legacy post-call accounting). |
+| `require_pricing` | boolean | `true` | If true, budgeted tenants will fail-closed (reject with 500) if any target in the route plan lacks configured pricing. |
+
+```yaml
+budget:
+  reserve: strict
+  require_pricing: true
 ```
 
 ---

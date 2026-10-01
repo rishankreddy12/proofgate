@@ -19,6 +19,7 @@ type Metrics struct {
 	Registry        *prometheus.Registry
 	FailOpen        prometheus.Counter
 	SpoofedInternal *prometheus.CounterVec
+	UnpricedCalls   *prometheus.CounterVec
 	requests        *prometheus.CounterVec
 	duration        *prometheus.HistogramVec
 	overhead        *prometheus.HistogramVec
@@ -39,6 +40,7 @@ func NewMetrics() *Metrics {
 	m := &Metrics{Registry: r,
 		FailOpen:        prometheus.NewCounter(prometheus.CounterOpts{Name: "proofgate_ratelimit_fail_open_total", Help: "Requests allowed because Redis was unavailable."}),
 		SpoofedInternal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_spoofed_internal_header_total", Help: "Requests where client supplied untrusted X-ProofGate-Internal header."}, []string{"tenant"}),
+		UnpricedCalls:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_unpriced_calls_total", Help: "Calls to targets with no price configured."}, []string{"provider", "model"}),
 		requests:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_requests_total", Help: "Chat requests."}, []string{"route", "target", "status", "cache", "stream"}),
 		duration:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "proofgate_request_duration_seconds", Help: "End-to-end latency.", Buckets: latencyBuckets}, []string{"route", "stream"}),
 		overhead:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "proofgate_overhead_seconds", Help: "Latency minus time spent waiting on providers.", Buckets: latencyBuckets}, []string{"stream"}),
@@ -51,7 +53,7 @@ func NewMetrics() *Metrics {
 		embedToks:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_embedding_tokens_total", Help: "Embedding tokens."}, []string{"route", "target", "status"}),
 		hedges:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_hedges_total", Help: "Hedged requests."}, []string{"route", "outcome"}),
 	}
-	for _, c := range []prometheus.Collector{m.FailOpen, m.SpoofedInternal, m.requests, m.duration, m.overhead, m.ttft, m.tokens, m.cost, m.unpriced, m.breaker, m.embeds, m.embedToks, m.hedges} {
+	for _, c := range []prometheus.Collector{m.FailOpen, m.SpoofedInternal, m.UnpricedCalls, m.requests, m.duration, m.overhead, m.ttft, m.tokens, m.cost, m.unpriced, m.breaker, m.embeds, m.embedToks, m.hedges} {
 		f(c)
 	}
 	return m
@@ -118,6 +120,19 @@ func (m *Metrics) ObserveSpoofedInternal(tenant string) {
 	m.SpoofedInternal.WithLabelValues(tenant).Inc()
 }
 
+func (m *Metrics) ObserveUnpricedCall(provider, model string) {
+	if m == nil || m.UnpricedCalls == nil {
+		return
+	}
+	if provider == "" {
+		provider = "unknown"
+	}
+	if model == "" {
+		model = "unknown"
+	}
+	m.UnpricedCalls.WithLabelValues(provider, model).Inc()
+}
+
 type metricsStage struct{ m *Metrics }
 
 func (m *Metrics) Stage() pipeline.Stage { return metricsStage{m} }
@@ -152,5 +167,6 @@ func (s metricsStage) After(_ context.Context, c *pipeline.Call) {
 	s.m.cost.WithLabelValues(route, target).Add(float64(c.CostMicros) / 1e6)
 	if _, ok := c.Values["cost.unpriced"]; ok {
 		s.m.unpriced.WithLabelValues(target).Inc()
+		s.m.ObserveUnpricedCall(c.Target.Provider, c.Target.Model)
 	}
 }

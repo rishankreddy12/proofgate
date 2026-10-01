@@ -10,6 +10,7 @@ import (
 
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/pipeline"
+	"github.com/proofgate/proofgate/internal/ratelimit"
 )
 
 var RunIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
@@ -17,6 +18,7 @@ var RunIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 type stage struct {
 	s          Store
 	fuzzy      *FuzzyDetector
+	limiter    ratelimit.Backend
 	defaultMax int
 }
 
@@ -25,6 +27,10 @@ func NewStage(s Store, fuzzy ...*FuzzyDetector) pipeline.Stage {
 }
 
 func NewStageWithDefaults(s Store, defaultMax int, fuzzy ...*FuzzyDetector) pipeline.Stage {
+	return NewStageWithLimiter(s, defaultMax, nil, fuzzy...)
+}
+
+func NewStageWithLimiter(s Store, defaultMax int, limiter ratelimit.Backend, fuzzy ...*FuzzyDetector) pipeline.Stage {
 	var f *FuzzyDetector
 	if len(fuzzy) > 0 {
 		f = fuzzy[0]
@@ -32,7 +38,7 @@ func NewStageWithDefaults(s Store, defaultMax int, fuzzy ...*FuzzyDetector) pipe
 	if defaultMax <= 0 {
 		defaultMax = 8192
 	}
-	return &stage{s: s, fuzzy: f, defaultMax: defaultMax}
+	return &stage{s: s, fuzzy: f, limiter: limiter, defaultMax: defaultMax}
 }
 
 func (st *stage) Name() string { return "agentrun" }
@@ -86,13 +92,23 @@ func (st *stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	}
 
 	if p.FuzzyLoop && st.fuzzy != nil {
-		maxSim, repeats, isLoop, ferr := st.fuzzy.Check(ctx, c.Principal.TenantID, runID, p, c.Request)
-		if ferr != nil {
-			slog.Warn("fuzzy loop check failed", "run", runID, "err", ferr)
-		} else if isLoop {
-			return false, runErr(429, "agent_loop_detected",
-				fmt.Sprintf("run %s repeated semantically equivalent steps %d times (similarity %.2f >= %.2f)",
-					runID, repeats, maxSim, p.FuzzyThreshold))
+		skipFuzzy := false
+		if st.limiter != nil {
+			d, err := st.limiter.Take(ctx, c.Principal.TenantID, c.Principal.Tenant, 0)
+			if err == nil && (!d.Allowed || d.TooLarge) {
+				slog.Debug("skipping fuzzy loop check: rate limit exceeded", "tenant", c.Principal.TenantID, "run", runID)
+				skipFuzzy = true
+			}
+		}
+		if !skipFuzzy {
+			maxSim, repeats, isLoop, ferr := st.fuzzy.Check(ctx, c.Principal.TenantID, runID, p, c.Request)
+			if ferr != nil {
+				slog.Warn("fuzzy loop check failed", "run", runID, "err", ferr)
+			} else if isLoop {
+				return false, runErr(429, "agent_loop_detected",
+					fmt.Sprintf("run %s repeated semantically equivalent steps %d times (similarity %.2f >= %.2f)",
+						runID, repeats, maxSim, p.FuzzyThreshold))
+			}
 		}
 	}
 	c.Values["run.id"] = runID
