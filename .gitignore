@@ -1,5 +1,6 @@
 bin/
 .env
+.env.*
 *.log
 coverage.out
 bench/tmp/
@@ -7,3 +8,13 @@ bench/datasets/*.jsonl
 *.exe
 .quickstart-key
 deploy/bin/
+deploy/secrets/
+deploy/proofgate.local.yaml
+deploy/docker-compose.local.yml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
