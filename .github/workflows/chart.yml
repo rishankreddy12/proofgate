@@ -28,11 +28,14 @@ jobs:
         run: helm lint deploy/helm/proofgate
       - name: Run helm-unittest
         run: |
-          helm plugin install https://github.com/helm-unittest/helm-unittest.git
+          helm plugin install https://github.com/helm-unittest/helm-unittest.git --version v0.7.2
           helm unittest deploy/helm/proofgate
       - name: Validate templates with kubeconform
         run: |
-          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          KUBECONFORM_VERSION=v0.6.7
+          curl -fsSLO https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz
+          echo "492025345fb103d15915d38f2b4c10a40f1a6ec7b3c22ffaa1b2a95c4cfdcbb9  kubeconform-linux-amd64.tar.gz" | sha256sum -c -
+          tar xzf kubeconform-linux-amd64.tar.gz
           sudo mv kubeconform /usr/local/bin/
           helm template proofgate deploy/helm/proofgate | kubeconform -strict -summary
 
@@ -80,7 +83,7 @@ jobs:
           POD=$(kubectl get pods -l app.kubernetes.io/name=proofgate -o jsonpath="{.items[0].metadata.name}")
           kubectl exec "$POD" -- /usr/local/bin/proofgatectl tenant create --name demo
           KEY=$(kubectl exec "$POD" -- /usr/local/bin/proofgatectl key create --tenant demo --name smoke)
-          kubectl run curl-test --rm -i --restart=Never --image=curlimages/curl -- \
+          kubectl run curl-test --rm -i --restart=Never --image=curlimages/curl@sha256:d9b23b1238ebaa664619d9b626e2e283bd7833f4a3bfecae29b867c293c6600c -- \
             curl -fsS http://proofgate:8080/v1/chat/completions \
             -H "Authorization: Bearer $KEY" \
             -H "Content-Type: application/json" \

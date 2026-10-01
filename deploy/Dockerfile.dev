@@ -1,0 +1,8 @@
+# Dockerfile.dev uses prebuilt binaries from deploy/bin/ for fast local testing cycles
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+COPY deploy/bin/proofgate /usr/local/bin/proofgate
+COPY deploy/bin/proofgatectl /usr/local/bin/proofgatectl
+COPY deploy/proofgate.yaml /etc/proofgate/proofgate.yaml
+USER nonroot:nonroot
+EXPOSE 8080 9090
+ENTRYPOINT ["/usr/local/bin/proofgate"]
