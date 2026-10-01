@@ -22,14 +22,13 @@ import (
 	"github.com/proofgate/proofgate/internal/agentrun"
 	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/api"
+	"github.com/proofgate/proofgate/internal/app"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/budget"
 	"github.com/proofgate/proofgate/internal/cache"
 	"github.com/proofgate/proofgate/internal/config"
-	"github.com/proofgate/proofgate/internal/guard"
 	"github.com/proofgate/proofgate/internal/health"
 	"github.com/proofgate/proofgate/internal/mcpproxy"
-	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/router"
@@ -217,17 +216,18 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	runs := agentrun.NewRedisStore(rdb)
 	fuzzyDetector := agentrun.NewFuzzyDetector(embedFunc, agentrun.NewRedisFuzzyStore(rdb))
 
-	// Order matters: After runs in reverse, so metrics and trace (first) observe the final state (last).
-	pipe := pipeline.New(
-		metrics.Stage(),
-		telemetry.TraceStage(),
-		analytics.UsageStage(usage.Emit),
-		agentrun.NewStageWithDefaults(runs, cfg.Defaults.DefaultMaxTokens, fuzzyDetector),
-		guard.NewStage(),
-		cacheStage,
-		ratelimit.NewStage(limiter, cfg.Defaults.MaxTokensReserve, cfg.Defaults.DefaultMaxTokens, metrics.FailOpen.Inc),
-		budget.NewStage(ledger, time.Now),
-	)
+	pipe := app.BuildPipeline(app.Deps{
+		Metrics:        metrics,
+		UsageEmit:      usage.Emit,
+		Runs:           runs,
+		FuzzyDetector:  fuzzyDetector,
+		DefaultMaxToks: cfg.Defaults.DefaultMaxTokens,
+		CacheStage:     cacheStage,
+		Limiter:        limiter,
+		MaxTokReserve:  cfg.Defaults.MaxTokensReserve,
+		FailOpenInc:    metrics.FailOpen.Inc,
+		Ledger:         ledger,
+	})
 	h = &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now, Health: tracker, Metrics: metrics,
 		MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,
 		OnEmbed: func(ev server.EmbedEvent) {
