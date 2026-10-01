@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/pprof"
@@ -96,6 +97,18 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
+	}
+	var lintErrors []string
+	for _, issue := range config.Lint(cfg) {
+		if issue.Severity == config.SeverityError {
+			slog.Error("config lint error", "rule", issue.Rule, "msg", issue.Message)
+			lintErrors = append(lintErrors, fmt.Sprintf("[%s] %s", issue.Rule, issue.Message))
+		} else {
+			slog.Warn("config lint warning", "rule", issue.Rule, "msg", issue.Message)
+		}
+	}
+	if len(lintErrors) > 0 {
+		return fmt.Errorf("config lint failed with %d error(s):\n%s", len(lintErrors), strings.Join(lintErrors, "\n"))
 	}
 	for _, p := range cfg.Providers {
 		if p.APIKeyEnv != "" {

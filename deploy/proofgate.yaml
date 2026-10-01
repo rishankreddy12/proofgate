@@ -1,8 +1,10 @@
-# Example configuration. Model ids and prices are examples: copy current values from each provider's
-# pricing page before using this for cost numbers. Prices are USD per 1M tokens.
+# Example configuration for local quickstart with mock LLMs and reference providers.
+# Model IDs and prices are examples: verify against each provider's current pricing page
+# before using this configuration in production. Prices are USD per 1M tokens.
+
 server:
   addr: ":8080"
-  admin_addr: "0.0.0.0:9090"   # inside the container only; do not publish this port publicly
+  admin_addr: "127.0.0.1:9090"
   max_request_body_bytes: 10485760 # 10MB
   read_header_timeout: 10s
   idle_timeout: 120s
@@ -15,11 +17,9 @@ admin_auth:
   session_idle_timeout: 30m
   session_absolute_timeout: 12h
 
-# Persistent state (defaults to DATABASE_URL if omitted)
 database:
   max_conns: 20
 
-# Analytics & event queues (defaults to CLICKHOUSE_DSN if omitted)
 analytics:
   usage_batcher:
     capacity: 50000
@@ -31,18 +31,15 @@ analytics:
     flush_interval: 1s
   flush_timeout: 10s
 
-# Circuit breaker failure isolation
 breakers:
   threshold: 5
   cooldown: 30s
 
-# In-memory authentication key caching
 auth:
   cache_ttl: 30s
   negative_cache_ttl: 5s
   max_cached_keys: 100000
 
-# Global MCP proxy limits
 mcp:
   max_request_body_bytes: 4194304 # 4MB
 
@@ -58,153 +55,60 @@ providers:
   - {name: anthropic, type: anthropic, base_url: "https://api.anthropic.com", api_key_env: ANTHROPIC_API_KEY}
   - {name: gemini, type: gemini, base_url: "https://generativelanguage.googleapis.com", api_key_env: GEMINI_API_KEY}
   - {name: ollama, type: openai, base_url: "http://ollama:11434/v1"}
-  # Local EasyCLIProxyAPI running on Windows host (OpenAI-compatible format)
-  - {name: easycli, type: openai, base_url: "http://host.docker.internal:8317/v1", api_key_env: EASYCLI_API_KEY}
 
 pricing:
-  mock-a/mock-small:   {input: 0.10, output: 0.40}
-  mock-b/mock-large:   {input: 1.00, output: 4.00}
-  mock-a/mock-embed:   {input: 0.02, output: 0}
-  mock-bench/mock-small: {input: 0.10, output: 0.40}
-  # Local proxy models at $20
-  easycli/gemini-3-flash:         {input: 20.00, output: 20.00}
-  easycli/gemini-3.7-flash-high:  {input: 20.00, output: 20.00}
-  easycli/claude-sonnet-4-6:      {input: 20.00, output: 20.00}
-  easycli/claude-opus-4-6-thinking: {input: 20.00, output: 20.00}
+  # Mock LLM pricing for zero-key local quickstart and tests:
+  mock-a/mock-small:       {input: 0.10, output: 0.40}
+  mock-b/mock-large:       {input: 1.00, output: 4.00}
+  mock-a/mock-embed:       {input: 0.02, output: 0.00}
+  mock-bench/mock-small:   {input: 0.10, output: 0.40}
+
+  # Production providers (verify against provider price page):
+  openai/gpt-4o:           {input: 2.50, output: 10.00, cached_input: 1.25}
+  openai/gpt-4o-mini:      {input: 0.15, output: 0.60, cached_input: 0.075}
+  anthropic/claude-3-5-sonnet: {input: 3.00, output: 15.00}
+  gemini/gemini-1.5-pro:   {input: 3.50, output: 10.50}
+  gemini/gemini-1.5-flash: {input: 0.075, output: 0.30}
+
+budget:
+  reserve: strict
+  require_pricing: true
+
+proof:
+  min_threshold: 0.86
 
 routes:
   - name: default
     targets:
-      - {provider: easycli, model: gemini-3-flash}
-      - {provider: easycli, model: claude-sonnet-4-6}
-      # --- Original Mock LLM targets (uncomment whenever you want to switch back to mock LLMs) ---
-      # - {provider: mock-a, model: mock-small}
-      # - {provider: mock-b, model: mock-large}
+      - {provider: mock-a, model: mock-small}
+      - {provider: mock-b, model: mock-large}
     hedge: {enabled: true, max_extra: 0.1}
     cache:
-      mode: on
+      mode: shadow
       exact: true
       semantic: true
-      threshold: 0.85
+      threshold: 0.90
       embedding_route: embed
       ttl: 24h
-  # Dedicated routes for EasyCLIProxyAPI models:
-  - name: claude
-    targets:
-      - {provider: easycli, model: claude-sonnet-4-6}
-      - {provider: easycli, model: claude-opus-4-6-thinking}
-    retry:
-      max_attempts: 3
-      base_delay: 1s
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
-  - name: gemini
-    targets:
-      - {provider: easycli, model: gemini-3-flash}
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
-  # Common Cursor model aliases:
-  - name: auto
-    targets:
-      - {provider: easycli, model: claude-sonnet-4-6}
-      - {provider: easycli, model: gemini-3-flash}
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
-  - name: claude-3-5-sonnet-20241022
-    targets:
-      - {provider: easycli, model: claude-sonnet-4-6}
-      - {provider: easycli, model: gemini-3.7-flash-high}
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
-  - name: claude-3-5-sonnet
-    targets:
-      - {provider: easycli, model: claude-sonnet-4-6}
-      - {provider: easycli, model: gemini-3.7-flash-high}
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
-  - name: claude-3.5-sonnet
-    targets:
-      - {provider: easycli, model: claude-sonnet-4-6}
-      - {provider: easycli, model: gemini-3.7-flash-high}
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
-  - name: gpt-4o
-    targets:
-      - {provider: easycli, model: claude-sonnet-4-6}
-      - {provider: easycli, model: gemini-3-flash}
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
-  - name: gpt-4o-mini
-    targets:
-      - {provider: easycli, model: gemini-3-flash}
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
-  - name: cursor-small
-    targets:
-      - {provider: easycli, model: gemini-3-flash}
-    cache:
-      mode: on
-      exact: true
-      semantic: true
-      threshold: 0.85
-      embedding_route: embed
-      ttl: 24h
+
   - name: bench
     targets:
       - {provider: mock-bench, model: mock-small}
     cache:
       mode: "off"
+
   - name: faq
     targets:
       - {provider: mock-a, model: mock-small}
       - {provider: mock-b, model: mock-large}
     cache:
-      mode: on
+      mode: shadow
       exact: true
       semantic: true
       threshold: 0.95
       embedding_route: embed
       ttl: 24h
+
   - name: embed
     embeddings: true
     targets:

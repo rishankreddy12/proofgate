@@ -19,6 +19,7 @@ A canonical `proofgate.yaml` is composed of the following top-level blocks:
 - `providers`: Upstream LLM backend definitions.
 - `pricing`: Model cost rates per 1M tokens.
 - `budget`: Monthly tenant budget reservation and enforcement settings.
+- `proof`: Automated quality proof and semantic threshold floor settings.
 - `routes`: Virtual routing topologies, fallback strategies, caching, and guardrails.
 - `defaults`: Global system fallback limits.
 - `slos`: Target Service Level Objectives for health and hedging.
@@ -274,6 +275,7 @@ Defines upstream LLM APIs and credentials.
 | `api_key_env` | string | `""` | Environment variable name storing provider API key (e.g. `OPENAI_API_KEY`). |
 | `api_key_db` | boolean | `false` | When `true`, dynamically fetches envelope-encrypted key from PostgreSQL. |
 | `headers` | map | `{}` | Static HTTP headers sent with every upstream request. |
+| `allow_insecure_base_url` | boolean | `false` | When `true`, permits plain HTTP base URLs for non-loopback hosts. |
 
 ```yaml
 providers:
@@ -345,6 +347,7 @@ Configured per route under `routes[].cache`.
 | `embedding_route` | string | `""` | Name of internal route serving embedding vectors for queries. |
 | `per_user` | boolean | `false` | Partition cache keys by client user identifier (`user` field). |
 | `max_entry_bytes` | integer | `262144` | Maximum payload size in bytes cached in Redis (default 256KB). |
+| `acknowledge_uncalibrated` | boolean | `false` | When `true`, allows `cache.mode: on` without verified calibration overrides. |
 
 ---
 
@@ -445,6 +448,17 @@ Defines latency and error budgets per target model for health degradation tracki
 | :--- | :--- | :--- | :--- |
 | `watcher_interval` | duration | `5s` | Interval between polling `proofgate.yaml` for configuration reload. |
 | `override_interval` | duration | `10s` | Interval between polling PostgreSQL database for runtime routing overrides. |
+
+---
+
+## 13.2 Quality Proof & Calibration (`proof`)
+
+Configuration for automated quality proofs and semantic threshold calibration floors.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `proof` | object | - | Proof system and calibration configuration. |
+| `min_threshold` | float | `0.86` | Documented minimum calibrated floor for semantic cache similarity thresholds. |
 
 ---
 

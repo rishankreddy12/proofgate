@@ -634,9 +634,10 @@ func runConfig(ctx context.Context, gf globalFlags, args []string) {
 	case "validate":
 		fs := flag.NewFlagSet("config validate", flag.ExitOnError)
 		file := fs.String("file", "", "path to config file")
+		fs.StringVar(file, "f", "", "path to config file (shorthand)")
 		_ = fs.Parse(args[1:])
 		if *file == "" {
-			die("--file is required")
+			die("-f / --file is required")
 		}
 
 		_, err := config.Load(*file)
@@ -644,6 +645,37 @@ func runConfig(ctx context.Context, gf globalFlags, args []string) {
 			die("INVALID: %v", err)
 		}
 		fmt.Printf("Configuration in %s is valid.\n", *file)
+
+	case "lint":
+		fs := flag.NewFlagSet("config lint", flag.ExitOnError)
+		file := fs.String("file", "", "path to config file")
+		fs.StringVar(file, "f", "", "path to config file (shorthand)")
+		strict := fs.Bool("strict", false, "fail on warnings as well as errors")
+		_ = fs.Parse(args[1:])
+		if *file == "" {
+			die("-f / --file is required")
+		}
+
+		cfg, err := config.Load(*file)
+		if err != nil {
+			die("PARSE ERROR: %v", err)
+		}
+		issues := config.Lint(cfg, config.LintOpts{Strict: *strict})
+		hasErrors := false
+		for _, issue := range issues {
+			if issue.Severity == config.SeverityError {
+				hasErrors = true
+				fmt.Fprintf(os.Stderr, "ERROR: [%s] %s\n", issue.Rule, issue.Message)
+			} else {
+				fmt.Fprintf(os.Stdout, "WARN:  [%s] %s\n", issue.Rule, issue.Message)
+			}
+		}
+		if hasErrors || (*strict && len(issues) > 0) {
+			os.Exit(1)
+		}
+		if len(issues) == 0 {
+			fmt.Printf("Configuration in %s passed linting with zero issues.\n", *file)
+		}
 
 	case "reload":
 		client, err := NewClient(gf.profile, gf.server, gf.insecure, gf.output == "json")

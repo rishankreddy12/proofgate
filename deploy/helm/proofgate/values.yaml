@@ -82,7 +82,9 @@ serviceMonitor:
 config: |
   server:
     addr: ":8080"
-    admin_addr: "0.0.0.0:9090"
+    admin_addr: "127.0.0.1:9090"
+  admin_auth:
+    enabled: true
   secrets:
     kek: local
     local_kek_file: /run/secrets/local_kek
@@ -90,6 +92,8 @@ config: |
     - name: mock
       type: openai
       base_url: "http://mockllm:8081/v1"
+  pricing:
+    mock/mock-small: {input: 0.10, output: 0.40}
   routes:
     - name: default
       targets:

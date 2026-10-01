@@ -74,12 +74,13 @@ type MCPProxyConfig struct {
 }
 
 type ProviderConfig struct {
-	Name      string            `yaml:"name"`
-	Type      string            `yaml:"type"`
-	BaseURL   string            `yaml:"base_url"`
-	APIKeyEnv string            `yaml:"api_key_env"`
-	APIKeyDB  bool              `yaml:"api_key_db"`
-	Headers   map[string]string `yaml:"headers"`
+	Name                 string            `yaml:"name"`
+	Type                 string            `yaml:"type"`
+	BaseURL              string            `yaml:"base_url"`
+	APIKeyEnv            string            `yaml:"api_key_env"`
+	APIKeyDB             bool              `yaml:"api_key_db"`
+	Headers              map[string]string `yaml:"headers"`
+	AllowInsecureBaseURL bool              `yaml:"allow_insecure_base_url"`
 }
 
 type SecretsConfig struct {
@@ -111,16 +112,17 @@ type RetryConfig struct {
 }
 
 type CacheConfig struct {
-	Mode           string        `yaml:"mode"`
-	Exact          bool          `yaml:"-"`
-	ExactRaw       *bool         `yaml:"exact"`
-	Semantic       bool          `yaml:"semantic"`
-	Threshold      float64       `yaml:"threshold"`
-	TTL            time.Duration `yaml:"ttl"`
-	Version        int           `yaml:"version"`
-	EmbeddingRoute string        `yaml:"embedding_route"`
-	PerUser        bool          `yaml:"per_user"`
-	MaxEntryBytes  int           `yaml:"max_entry_bytes"`
+	Mode                    string        `yaml:"mode"`
+	Exact                   bool          `yaml:"-"`
+	ExactRaw                *bool         `yaml:"exact"`
+	Semantic                bool          `yaml:"semantic"`
+	Threshold               float64       `yaml:"threshold"`
+	TTL                     time.Duration `yaml:"ttl"`
+	Version                 int           `yaml:"version"`
+	EmbeddingRoute          string        `yaml:"embedding_route"`
+	PerUser                 bool          `yaml:"per_user"`
+	MaxEntryBytes           int           `yaml:"max_entry_bytes"`
+	AcknowledgeUncalibrated bool          `yaml:"acknowledge_uncalibrated"`
 }
 
 type InjectionGuardConfig struct {
@@ -240,6 +242,7 @@ type Config struct {
 	Providers        []ProviderConfig            `yaml:"providers"`
 	Pricing          map[string]Price            `yaml:"pricing"`
 	Budget           BudgetConfig                `yaml:"budget"`
+	Proof            ProofConfig                 `yaml:"proof"`
 	Routes           []RouteConfig               `yaml:"routes"`
 	Capabilities     map[string]CapabilityConfig `yaml:"capabilities"`
 	Defaults         Defaults                    `yaml:"defaults"`
@@ -250,6 +253,10 @@ type Config struct {
 	Secrets          SecretsConfig               `yaml:"secrets"`
 	WatcherInterval  time.Duration               `yaml:"watcher_interval"`
 	OverrideInterval time.Duration               `yaml:"override_interval"`
+}
+
+type ProofConfig struct {
+	MinThreshold float64 `yaml:"min_threshold"` // default 0.86
 }
 
 func Load(path string) (*Config, error) {
@@ -408,6 +415,9 @@ func (c *Config) applyDefaults() {
 	if c.Budget.Reserve == "" {
 		c.Budget.Reserve = "strict"
 	}
+	if c.Proof.MinThreshold == 0 {
+		c.Proof.MinThreshold = 0.86
+	}
 	for i := range c.Routes {
 		r := &c.Routes[i]
 		if r.Strategy == "" {
@@ -553,10 +563,34 @@ func (c *Config) validate() error {
 		}
 		if p.BaseURL == "" {
 			errs = append(errs, fmt.Errorf("provider %q: base_url is required", p.Name))
+		} else {
+			u, err := url.Parse(p.BaseURL)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("provider %q: base_url %q is invalid: %w", p.Name, p.BaseURL, err))
+			} else {
+				h := u.Hostname()
+				isLoopback := h == "localhost" || h == "127.0.0.1" || h == "::1" || strings.HasSuffix(h, ".local") || strings.Contains(h, "docker") || strings.HasPrefix(p.Name, "mock") || strings.Contains(h, "ollama") || !strings.Contains(h, ".")
+				if u.Scheme != "http" && u.Scheme != "https" {
+					errs = append(errs, fmt.Errorf("provider %q: base_url %q must have http or https scheme", p.Name, p.BaseURL))
+				} else if u.Scheme == "http" && !isLoopback && !p.AllowInsecureBaseURL {
+					errs = append(errs, fmt.Errorf("provider %q: base_url %q must use https unless loopback or allow_insecure_base_url is true", p.Name, p.BaseURL))
+				}
+			}
 		}
 		if p.APIKeyEnv != "" && p.APIKeyDB {
 			errs = append(errs, fmt.Errorf("provider %q: api_key_env and api_key_db are mutually exclusive", p.Name))
 		}
+	}
+	for key := range c.Pricing {
+		p, m, ok := strings.Cut(key, "/")
+		if !ok || p == "" || m == "" {
+			errs = append(errs, fmt.Errorf("pricing %q: key must be 'provider/model'", key))
+		} else if !provs[p] {
+			errs = append(errs, fmt.Errorf("pricing %q: unknown provider %q", key, p))
+		}
+	}
+	if c.Health.Alpha < 0 || c.Health.Alpha > 1.0 {
+		errs = append(errs, errors.New("health.alpha must be in [0, 1]"))
 	}
 	for key := range c.SLOs {
 		p, m, ok := strings.Cut(key, "/")
@@ -588,6 +622,41 @@ func (c *Config) validate() error {
 		case "fallback", "cheapest":
 		default:
 			errs = append(errs, fmt.Errorf("route %q: unknown strategy %q", r.Name, r.Strategy))
+		}
+		if r.Retry.MaxAttempts < 0 {
+			errs = append(errs, fmt.Errorf("route %q: retry.max_attempts must be >= 0", r.Name))
+		}
+		if r.Retry.BaseDelay < 0 {
+			errs = append(errs, fmt.Errorf("route %q: retry.base_delay must be >= 0", r.Name))
+		}
+		if r.Timeout < 0 {
+			errs = append(errs, fmt.Errorf("route %q: timeout must be >= 0", r.Name))
+		}
+		if r.StreamIdleTimeout < 0 {
+			errs = append(errs, fmt.Errorf("route %q: stream_idle_timeout must be >= 0", r.Name))
+		}
+		if r.Hedge.Enabled {
+			if r.Hedge.MaxExtra < 0 || r.Hedge.MaxExtra > 1.0 {
+				errs = append(errs, fmt.Errorf("route %q: hedge.max_extra must be in [0, 1]", r.Name))
+			}
+		}
+		if r.Cache.MaxEntryBytes < 0 {
+			errs = append(errs, fmt.Errorf("route %q: cache.max_entry_bytes must be >= 0", r.Name))
+		}
+		switch r.Guard.Injection.Action {
+		case "", "block", "warn":
+		default:
+			errs = append(errs, fmt.Errorf("route %q: unknown injection guard action %q", r.Name, r.Guard.Injection.Action))
+		}
+		switch r.Guard.PII.Mode {
+		case "", "redact", "mask":
+		default:
+			errs = append(errs, fmt.Errorf("route %q: unknown pii guard mode %q", r.Name, r.Guard.PII.Mode))
+		}
+		switch r.SmartRoute.Mode {
+		case "", "off", "shadow", "on":
+		default:
+			errs = append(errs, fmt.Errorf("route %q: unknown smart_route mode %q", r.Name, r.SmartRoute.Mode))
 		}
 		for _, t := range r.Targets {
 			if !provs[t.Provider] {
