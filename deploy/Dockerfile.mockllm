@@ -3,13 +3,13 @@ FROM golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f3
 WORKDIR /src
 COPY . .
 RUN if [ -f deploy/bin/mockllm ]; then \
-      mkdir -p /out && cp deploy/bin/mockllm /out/mockllm; \
+      mkdir -p /out && cp deploy/bin/mockllm /out/mockllm && chmod 0755 /out/mockllm; \
     else \
       go mod download && \
       CGO_ENABLED=0 GOFLAGS=-mod=readonly go build -trimpath -ldflags "-s -w" -o /out/mockllm ./cmd/mockllm; \
     fi
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
-COPY --from=build /out/mockllm /usr/local/bin/mockllm
+COPY --from=build --chmod=0755 /out/mockllm /usr/local/bin/mockllm
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/mockllm"]

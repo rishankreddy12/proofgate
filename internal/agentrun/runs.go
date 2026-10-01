@@ -23,6 +23,7 @@ type StepResult struct {
 	CostMicros int64
 	Tokens     int
 	Repeats    int
+	FuzzyScore float64
 }
 
 type Store interface {

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.1.0] - 2026-09-26
+
+### Added
+- **Authenticated Control-Plane & Remote CLI**:
+  - Remote administrative client mode for `proofgatectl` connecting securely over the private admin API (`:9090`).
+  - Three-tier Role-Based Access Control (RBAC): `admin`, `operator`, `viewer`.
+  - Ephemeral Redis session management: 256-bit random tokens (`pgadmin_`), SHA-256 hashed at rest, sliding-window idle timeout enforcement, and absolute session duration limits.
+  - Sliding-window login rate limiting with account lockout and HTTP 429 (`Retry-After`) protection against brute-force attacks.
+  - Administrative user lifecycle management in PostgreSQL with bcrypt (cost 12) password hashing.
+  - Remote provider operations: inspect configured providers, test upstream connectivity with minimal latency probes, and set/rotate envelope-encrypted credentials remotely.
+  - Live configuration management: view running config with automatic secret redaction, validate local config files, and trigger atomic hot reloads.
+  - Client profile management (`~/.config/proofgatectl/` / `%APPDATA%\proofgatectl\`) with multi-cluster support and atomic `0600` session token file writes.
+  - Tamper-evident admin audit log recording all administrative actions in PostgreSQL (`admin_audit` table).
+  - Backward-compatible zero-configuration default (`admin_auth.enabled: false`) keeping existing admin endpoints and data-plane operations unaffected.
+
+---
+
 ## [v1.0.0] - 2026-09-21
 
 ### Added

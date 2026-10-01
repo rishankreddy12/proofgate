@@ -89,3 +89,24 @@
   controls: ["All background changes go through route_overrides with a proof_events audit row"]
   tests: ["internal/store/overrides_integration_test.go:TestOverrides"]
   residual: Direct database edits bypass the audit table.
+- id: T14
+  category: S
+  asset: admin control-plane sessions
+  threat: Interception, theft, or replay of admin session tokens
+  controls: ["256-bit high-entropy tokens (pgadmin_ prefix)", "SHA-256 hashed at rest in Redis", "Client-side 0600 file permissions", "Idle and absolute session timeouts", "Cluster-wide instant revocation"]
+  tests: ["internal/adminauth/session_test.go:TestSessionLifecycle", "internal/adminauth/session_test.go:TestSessionTimeouts"]
+  residual: Compromise of client machine storage.
+- id: T15
+  category: D
+  asset: admin authentication endpoint
+  threat: Brute-force credential guessing or password spraying against admin API
+  controls: ["Bcrypt cost 12 password hashing", "Sliding-window login failure counter in Redis", "Account lockout with HTTP 429 and Retry-After", "Comprehensive audit trail in admin_audit"]
+  tests: ["internal/adminauth/login_test.go:TestLoginFlowAndLockout"]
+  residual: Compromise of an admin's strong password out-of-band.
+- id: T16
+  category: E
+  asset: control-plane resources and users
+  threat: Privilege escalation by operator or viewer to modify users or unauthorized settings
+  controls: ["RBAC middleware enforcing granular permissions per endpoint", "Session invalidation on user disable/delete", "Immutable audit logging of administrative actions"]
+  tests: ["internal/adminauth/middleware_test.go:TestRequirePermission", "internal/adminauth/rbac_test.go:TestRBAC"]
+  residual: An insider possessing full admin credentials.

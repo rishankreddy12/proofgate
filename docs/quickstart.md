@@ -187,3 +187,41 @@ routes:
       knn_enabled: true
 ```
 If cheap-model quality degrades by more than 0.05 on the paired bootstrap 95% confidence interval, ProofGate automatically rolls back to strong-only routing within seconds.
+
+---
+
+## 6. Remote Control-Plane & Admin CLI
+
+Manage gateway providers, configuration, sessions, and health remotely with `proofgatectl`:
+
+### 6.1 Enable Admin Authentication
+
+Add to `deploy/proofgate.yaml`:
+```yaml
+admin_auth:
+  enabled: true
+```
+
+### 6.2 Bootstrap Admin User
+
+Create the initial administrator directly on the server:
+```bash
+go run ./cmd/proofgatectl bootstrap-admin --username admin
+```
+
+### 6.3 Log In & Manage
+
+Configure the profile and authenticate:
+```bash
+go run ./cmd/proofgatectl profile add --name local --server http://localhost:9090
+go run ./cmd/proofgatectl profile use --name local
+go run ./cmd/proofgatectl login
+
+# Inspect running status and providers remotely:
+go run ./cmd/proofgatectl status
+go run ./cmd/proofgatectl provider list
+go run ./cmd/proofgatectl health
+```
+
+See the full [Admin CLI & Control-Plane Guide](admin-cli.md) for complete command documentation and RBAC configurations.
+

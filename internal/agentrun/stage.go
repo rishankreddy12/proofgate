@@ -14,9 +14,26 @@ import (
 
 var RunIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
-type stage struct{ s Store }
+type stage struct {
+	s          Store
+	fuzzy      *FuzzyDetector
+	defaultMax int
+}
 
-func NewStage(s Store) pipeline.Stage { return &stage{s: s} }
+func NewStage(s Store, fuzzy ...*FuzzyDetector) pipeline.Stage {
+	return NewStageWithDefaults(s, 8192, fuzzy...)
+}
+
+func NewStageWithDefaults(s Store, defaultMax int, fuzzy ...*FuzzyDetector) pipeline.Stage {
+	var f *FuzzyDetector
+	if len(fuzzy) > 0 {
+		f = fuzzy[0]
+	}
+	if defaultMax <= 0 {
+		defaultMax = 8192
+	}
+	return &stage{s: s, fuzzy: f, defaultMax: defaultMax}
+}
 
 func (st *stage) Name() string { return "agentrun" }
 
@@ -47,7 +64,7 @@ func (st *stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	if !RunIDPattern.MatchString(runID) {
 		return false, api.BadRequest("X-ProofGate-Run-Id must match " + RunIDPattern.String())
 	}
-	estTokens := c.Request.EstimatePromptTokens() + c.Request.EffectiveMaxTokens(8192)
+	estTokens := c.Request.EstimatePromptTokens() + c.Request.EffectiveMaxTokens(st.defaultMax)
 	res, err := st.s.Step(ctx, c.Principal.TenantID, runID, p, Fingerprint(c.Request), 0, estTokens)
 	if err != nil {
 		if c.Principal.Tenant.Strict {
@@ -66,6 +83,17 @@ func (st *stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	case Loop:
 		return false, runErr(429, "agent_loop_detected",
 			fmt.Sprintf("run %s repeated the same step %d times in its last %d steps", runID, res.Repeats, p.LoopWindow))
+	}
+
+	if p.FuzzyLoop && st.fuzzy != nil {
+		maxSim, repeats, isLoop, ferr := st.fuzzy.Check(ctx, c.Principal.TenantID, runID, p, c.Request)
+		if ferr != nil {
+			slog.Warn("fuzzy loop check failed", "run", runID, "err", ferr)
+		} else if isLoop {
+			return false, runErr(429, "agent_loop_detected",
+				fmt.Sprintf("run %s repeated semantically equivalent steps %d times (similarity %.2f >= %.2f)",
+					runID, repeats, maxSim, p.FuzzyThreshold))
+		}
 	}
 	c.Values["run.id"] = runID
 	c.Values["run.est_tokens"] = estTokens

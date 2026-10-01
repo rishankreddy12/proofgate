@@ -35,9 +35,14 @@ func writeCallHeaders(w http.ResponseWriter, c *pipeline.Call) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(b)
 }
 
 // upstreamError maps router/provider errors to client-facing errors. It returns nil when the client left.

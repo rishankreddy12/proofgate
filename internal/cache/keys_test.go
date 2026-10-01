@@ -71,6 +71,24 @@ func TestExactHashAndSemanticText(t *testing.T) {
 	require.Equal(t, "second", SemanticText(req(sys("s"), user("first"), asst("a"), user("second"))))
 }
 
+func TestSemanticTextFromHeader(t *testing.T) {
+	r := req(sys("context instructions"), user("massive 50-page document context and data..."))
+	
+	// Without header: fallback to user message
+	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, nil))
+	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, http.Header{}))
+	
+	// With header: uses X-ProofGate-Cache-Query
+	h := http.Header{}
+	h.Set("X-ProofGate-Cache-Query", "What is the refund policy?")
+	require.Equal(t, "What is the refund policy?", SemanticTextFromHeader(r, h))
+
+	// With whitespace header: trims or falls back
+	h2 := http.Header{}
+	h2.Set("X-ProofGate-Cache-Query", "   ")
+	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, h2))
+}
+
 func TestParseTags(t *testing.T) {
 	require.Equal(t, []string{"docs-v2", "faq"}, ParseTags(" docs-v2, faq ,BAD TAG,, "))
 	require.Len(t, ParseTags("a,b,c,d,e,f,g,h,i,j"), 8)

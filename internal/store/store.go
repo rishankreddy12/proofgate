@@ -40,11 +40,18 @@ type Store struct {
 }
 
 func Open(ctx context.Context, dsn string) (*Store, error) {
+	return OpenWithConfig(ctx, dsn, 20)
+}
+
+func OpenWithConfig(ctx context.Context, dsn string, maxConns int) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
 	}
-	cfg.MaxConns = 20
+	if maxConns <= 0 {
+		maxConns = 20
+	}
+	cfg.MaxConns = int32(maxConns)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -75,6 +82,30 @@ func (s *Store) TenantByName(ctx context.Context, name string) (Tenant, error) {
 	err := s.pool.QueryRow(ctx, `SELECT id::text, name, policy, created_at FROM tenants WHERE name=$1`, name).
 		Scan(&t.ID, &t.Name, &t.Policy, &t.CreatedAt)
 	return t, notFound(err)
+}
+
+func (s *Store) GetTenant(ctx context.Context, id string) (Tenant, error) {
+	var t Tenant
+	err := s.pool.QueryRow(ctx, `SELECT id::text, name, policy, created_at FROM tenants WHERE id=$1`, id).
+		Scan(&t.ID, &t.Name, &t.Policy, &t.CreatedAt)
+	return t, notFound(err)
+}
+
+func (s *Store) ListTenants(ctx context.Context) ([]Tenant, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id::text, name, policy, created_at FROM tenants ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Tenant
+	for rows.Next() {
+		var t Tenant
+		if err := rows.Scan(&t.ID, &t.Name, &t.Policy, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) UpdateTenantPolicy(ctx context.Context, id string, p TenantPolicy) error {

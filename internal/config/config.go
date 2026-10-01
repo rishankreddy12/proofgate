@@ -23,8 +23,54 @@ type MCPServerConfig struct {
 }
 
 type ServerConfig struct {
-	Addr      string `yaml:"addr"`
-	AdminAddr string `yaml:"admin_addr"`
+	Addr                string        `yaml:"addr"`
+	AdminAddr           string        `yaml:"admin_addr"`
+	MaxRequestBodyBytes int64         `yaml:"max_request_body_bytes"`
+	ReadHeaderTimeout   time.Duration `yaml:"read_header_timeout"`
+	IdleTimeout         time.Duration `yaml:"idle_timeout"`
+	DrainTimeout        time.Duration `yaml:"drain_timeout"`
+}
+
+type DatabaseConfig struct {
+	URL      string `yaml:"url"`
+	MaxConns int    `yaml:"max_conns"`
+}
+
+type RedisConfig struct {
+	URL string `yaml:"url"`
+}
+
+type BatcherConfig struct {
+	Capacity      int           `yaml:"capacity"`
+	BatchSize     int           `yaml:"batch_size"`
+	FlushInterval time.Duration `yaml:"flush_interval"`
+}
+
+type AnalyticsConfig struct {
+	ClickHouseDSN string        `yaml:"clickhouse_dsn"`
+	UsageBatcher  BatcherConfig `yaml:"usage_batcher"`
+	MCPBatcher    BatcherConfig `yaml:"mcp_batcher"`
+	FlushTimeout  time.Duration `yaml:"flush_timeout"`
+}
+
+type TelemetryConfig struct {
+	OTLPEndpoint string `yaml:"otlp_endpoint"`
+	ServiceName  string `yaml:"service_name"`
+}
+
+type BreakersConfig struct {
+	Threshold int           `yaml:"threshold"`
+	Cooldown  time.Duration `yaml:"cooldown"`
+}
+
+type AuthConfig struct {
+	CacheTTL         time.Duration `yaml:"cache_ttl"`
+	NegativeCacheTTL time.Duration `yaml:"negative_cache_ttl"`
+	MaxCachedKeys    int           `yaml:"max_cached_keys"`
+}
+
+type MCPProxyConfig struct {
+	MaxRequestBodyBytes int64 `yaml:"max_request_body_bytes"`
 }
 
 type ProviderConfig struct {
@@ -37,13 +83,15 @@ type ProviderConfig struct {
 }
 
 type SecretsConfig struct {
-	KEK          string        `yaml:"kek"`            // "local" | "vault"
-	LocalKEKFile string        `yaml:"local_kek_file"` // 32 random bytes, base64
-	VaultAddr    string        `yaml:"vault_addr"`
-	VaultKey     string        `yaml:"vault_key"`      // transit key name
-	VaultAuth    string        `yaml:"vault_auth"`     // "token" (VAULT_TOKEN env) | "kubernetes"
-	VaultRole    string        `yaml:"vault_role"`
-	CacheTTL     time.Duration `yaml:"cache_ttl"`      // default 60s
+	KEK            string                   `yaml:"kek"`            // "local" | "vault"
+	LocalKEKFile   string                   `yaml:"local_kek_file"` // 32 random bytes, base64
+	VaultAddr      string                   `yaml:"vault_addr"`
+	VaultKey       string                   `yaml:"vault_key"`      // transit key name
+	VaultAuth      string                   `yaml:"vault_auth"`     // "token" (VAULT_TOKEN env) | "kubernetes"
+	VaultRole      string                   `yaml:"vault_role"`
+	VaultTokenFile string                   `yaml:"vault_token_file"`
+	CacheTTL       time.Duration            `yaml:"cache_ttl"`      // default 60s
+	TenantKEKs     map[string]SecretsConfig `yaml:"tenant_keks"`
 }
 
 type Price struct {
@@ -123,8 +171,13 @@ type RouteConfig struct {
 }
 
 type Defaults struct {
-	MaxTokensReserve int `yaml:"max_tokens_reserve"` // cap on completion tokens pre-charged by the rate limiter
-	DefaultMaxTokens int `yaml:"default_max_tokens"`
+	MaxTokensReserve    int           `yaml:"max_tokens_reserve"` // cap on completion tokens pre-charged by the rate limiter
+	DefaultMaxTokens    int           `yaml:"default_max_tokens"`
+	AgentRunTTL         time.Duration `yaml:"agent_run_ttl"`
+	AgentLoopRepeats    int           `yaml:"agent_loop_repeats"`
+	AgentLoopWindow     int           `yaml:"agent_loop_window"`
+	AgentFuzzyThreshold float64       `yaml:"agent_fuzzy_threshold"`
+	EmbedderCacheSize   int           `yaml:"embedder_cache_size"`
 }
 
 type SLO struct {
@@ -139,19 +192,47 @@ type HealthConfig struct {
 	Recover       time.Duration `yaml:"recover"`
 	MinSamples    int           `yaml:"min_samples"`
 	ProbeInterval time.Duration `yaml:"probe_interval"`
+	ProbeTimeout  time.Duration `yaml:"probe_timeout"`
+	GossipAddr    string        `yaml:"gossip_addr"`
+	GossipPeers   []string      `yaml:"gossip_peers"`
+}
+
+type CapabilityConfig struct {
+	MaxContextTokens int   `yaml:"max_context_tokens"`
+	SupportsVision   bool  `yaml:"supports_vision"`
+	SupportsTools    *bool `yaml:"supports_tools"`
+}
+
+type AdminAuthConfig struct {
+	Enabled            bool          `yaml:"enabled"`
+	MaxLoginAttempts   int           `yaml:"max_login_attempts"`
+	LockoutDuration    time.Duration `yaml:"lockout_duration"`
+	SessionIdleTimeout time.Duration `yaml:"session_idle_timeout"`
+	SessionAbsTimeout  time.Duration `yaml:"session_absolute_timeout"`
 }
 
 type Config struct {
-	Server           ServerConfig      `yaml:"server"`
-	Providers        []ProviderConfig  `yaml:"providers"`
-	Pricing          map[string]Price  `yaml:"pricing"`
-	Routes           []RouteConfig     `yaml:"routes"`
-	Defaults         Defaults          `yaml:"defaults"`
-	SLOs             map[string]SLO    `yaml:"slos"`
-	Health           HealthConfig      `yaml:"health"`
-	MCPServers       []MCPServerConfig `yaml:"mcp_servers"`
-	MCPInsecureHosts []string          `yaml:"mcp_insecure_hosts"`
-	Secrets          SecretsConfig     `yaml:"secrets"`
+	Server           ServerConfig                `yaml:"server"`
+	Database         DatabaseConfig              `yaml:"database"`
+	Redis            RedisConfig                 `yaml:"redis"`
+	Analytics        AnalyticsConfig             `yaml:"analytics"`
+	Telemetry        TelemetryConfig             `yaml:"telemetry"`
+	Breakers         BreakersConfig              `yaml:"breakers"`
+	Auth             AuthConfig                  `yaml:"auth"`
+	AdminAuth        AdminAuthConfig             `yaml:"admin_auth"`
+	MCP              MCPProxyConfig              `yaml:"mcp"`
+	Providers        []ProviderConfig            `yaml:"providers"`
+	Pricing          map[string]Price            `yaml:"pricing"`
+	Routes           []RouteConfig               `yaml:"routes"`
+	Capabilities     map[string]CapabilityConfig `yaml:"capabilities"`
+	Defaults         Defaults                    `yaml:"defaults"`
+	SLOs             map[string]SLO              `yaml:"slos"`
+	Health           HealthConfig                `yaml:"health"`
+	MCPServers       []MCPServerConfig           `yaml:"mcp_servers"`
+	MCPInsecureHosts []string                    `yaml:"mcp_insecure_hosts"`
+	Secrets          SecretsConfig               `yaml:"secrets"`
+	WatcherInterval  time.Duration               `yaml:"watcher_interval"`
+	OverrideInterval time.Duration               `yaml:"override_interval"`
 }
 
 func Load(path string) (*Config, error) {
@@ -169,11 +250,33 @@ func Parse(b []byte) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	c.applyEnvOverrides()
 	c.applyDefaults()
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	return &c, nil
+}
+
+func (c *Config) applyEnvOverrides() {
+	if env := os.Getenv("DATABASE_URL"); env != "" && c.Database.URL == "" {
+		c.Database.URL = env
+	}
+	if env := os.Getenv("REDIS_URL"); env != "" && c.Redis.URL == "" {
+		c.Redis.URL = env
+	}
+	if env := os.Getenv("CLICKHOUSE_DSN"); env != "" && c.Analytics.ClickHouseDSN == "" {
+		c.Analytics.ClickHouseDSN = env
+	}
+	if env := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); env != "" && c.Telemetry.OTLPEndpoint == "" {
+		c.Telemetry.OTLPEndpoint = env
+	}
+	if env := os.Getenv("PROOFGATE_ADDR"); env != "" {
+		c.Server.Addr = env
+	}
+	if env := os.Getenv("PROOFGATE_ADMIN_ADDR"); env != "" {
+		c.Server.AdminAddr = env
+	}
 }
 
 func (c *Config) applyDefaults() {
@@ -183,11 +286,107 @@ func (c *Config) applyDefaults() {
 	if c.Server.AdminAddr == "" {
 		c.Server.AdminAddr = "127.0.0.1:9090"
 	}
+	if c.Server.MaxRequestBodyBytes == 0 {
+		c.Server.MaxRequestBodyBytes = 10 << 20 // 10MB
+	}
+	if c.Server.ReadHeaderTimeout == 0 {
+		c.Server.ReadHeaderTimeout = 10 * time.Second
+	}
+	if c.Server.IdleTimeout == 0 {
+		c.Server.IdleTimeout = 120 * time.Second
+	}
+	if c.Server.DrainTimeout == 0 {
+		c.Server.DrainTimeout = 30 * time.Second
+	}
+	if c.Database.MaxConns == 0 {
+		c.Database.MaxConns = 20
+	}
+	if c.Analytics.UsageBatcher.Capacity == 0 {
+		c.Analytics.UsageBatcher.Capacity = 50_000
+	}
+	if c.Analytics.UsageBatcher.BatchSize == 0 {
+		c.Analytics.UsageBatcher.BatchSize = 5_000
+	}
+	if c.Analytics.UsageBatcher.FlushInterval == 0 {
+		c.Analytics.UsageBatcher.FlushInterval = time.Second
+	}
+	if c.Analytics.MCPBatcher.Capacity == 0 {
+		c.Analytics.MCPBatcher.Capacity = 20_000
+	}
+	if c.Analytics.MCPBatcher.BatchSize == 0 {
+		c.Analytics.MCPBatcher.BatchSize = 2_000
+	}
+	if c.Analytics.MCPBatcher.FlushInterval == 0 {
+		c.Analytics.MCPBatcher.FlushInterval = time.Second
+	}
+	if c.Analytics.FlushTimeout == 0 {
+		c.Analytics.FlushTimeout = 10 * time.Second
+	}
+	if c.Telemetry.ServiceName == "" {
+		c.Telemetry.ServiceName = "proofgate"
+	}
+	if c.Breakers.Threshold == 0 {
+		c.Breakers.Threshold = 5
+	}
+	if c.Breakers.Cooldown == 0 {
+		c.Breakers.Cooldown = 30 * time.Second
+	}
+	if c.Auth.CacheTTL == 0 {
+		c.Auth.CacheTTL = 30 * time.Second
+	}
+	if c.Auth.NegativeCacheTTL == 0 {
+		c.Auth.NegativeCacheTTL = 5 * time.Second
+	}
+	if c.Auth.MaxCachedKeys == 0 {
+		c.Auth.MaxCachedKeys = 100_000
+	}
+	if c.MCP.MaxRequestBodyBytes == 0 {
+		c.MCP.MaxRequestBodyBytes = 4 << 20 // 4MB
+	}
+	if c.Health.ProbeTimeout == 0 {
+		c.Health.ProbeTimeout = 10 * time.Second
+	}
+	if c.Secrets.VaultAuth == "kubernetes" && c.Secrets.VaultTokenFile == "" {
+		c.Secrets.VaultTokenFile = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	}
+	if c.WatcherInterval == 0 {
+		c.WatcherInterval = 5 * time.Second
+	}
+	if c.OverrideInterval == 0 {
+		c.OverrideInterval = 10 * time.Second
+	}
 	if c.Defaults.MaxTokensReserve == 0 {
 		c.Defaults.MaxTokensReserve = 4096
 	}
 	if c.Defaults.DefaultMaxTokens == 0 {
 		c.Defaults.DefaultMaxTokens = 1024
+	}
+	if c.Defaults.AgentRunTTL == 0 {
+		c.Defaults.AgentRunTTL = time.Hour
+	}
+	if c.Defaults.AgentLoopRepeats == 0 {
+		c.Defaults.AgentLoopRepeats = 3
+	}
+	if c.Defaults.AgentLoopWindow == 0 {
+		c.Defaults.AgentLoopWindow = 20
+	}
+	if c.Defaults.AgentFuzzyThreshold == 0 {
+		c.Defaults.AgentFuzzyThreshold = 0.95
+	}
+	if c.Defaults.EmbedderCacheSize == 0 {
+		c.Defaults.EmbedderCacheSize = 10_000
+	}
+	if c.AdminAuth.MaxLoginAttempts == 0 {
+		c.AdminAuth.MaxLoginAttempts = 5
+	}
+	if c.AdminAuth.LockoutDuration == 0 {
+		c.AdminAuth.LockoutDuration = 15 * time.Minute
+	}
+	if c.AdminAuth.SessionIdleTimeout == 0 {
+		c.AdminAuth.SessionIdleTimeout = 30 * time.Minute
+	}
+	if c.AdminAuth.SessionAbsTimeout == 0 {
+		c.AdminAuth.SessionAbsTimeout = 12 * time.Hour
 	}
 	for i := range c.Routes {
 		r := &c.Routes[i]
@@ -252,6 +451,69 @@ func (c *Config) applyDefaults() {
 
 func (c *Config) validate() error {
 	var errs []error
+	if c.Server.MaxRequestBodyBytes < 0 {
+		errs = append(errs, errors.New("server.max_request_body_bytes must be >= 0"))
+	}
+	if c.Server.ReadHeaderTimeout < 0 {
+		errs = append(errs, errors.New("server.read_header_timeout must be >= 0"))
+	}
+	if c.Server.IdleTimeout < 0 {
+		errs = append(errs, errors.New("server.idle_timeout must be >= 0"))
+	}
+	if c.Server.DrainTimeout < 0 {
+		errs = append(errs, errors.New("server.drain_timeout must be >= 0"))
+	}
+	if c.Database.MaxConns < 0 {
+		errs = append(errs, errors.New("database.max_conns must be >= 0"))
+	}
+	if c.Analytics.UsageBatcher.Capacity < 0 || c.Analytics.UsageBatcher.BatchSize < 0 || c.Analytics.UsageBatcher.FlushInterval < 0 {
+		errs = append(errs, errors.New("analytics.usage_batcher parameters must be >= 0"))
+	}
+	if c.Analytics.MCPBatcher.Capacity < 0 || c.Analytics.MCPBatcher.BatchSize < 0 || c.Analytics.MCPBatcher.FlushInterval < 0 {
+		errs = append(errs, errors.New("analytics.mcp_batcher parameters must be >= 0"))
+	}
+	if c.Analytics.FlushTimeout < 0 {
+		errs = append(errs, errors.New("analytics.flush_timeout must be >= 0"))
+	}
+	if c.Breakers.Threshold < 0 {
+		errs = append(errs, errors.New("breakers.threshold must be >= 0"))
+	}
+	if c.Breakers.Cooldown < 0 {
+		errs = append(errs, errors.New("breakers.cooldown must be >= 0"))
+	}
+	if c.Auth.CacheTTL < 0 || c.Auth.NegativeCacheTTL < 0 || c.Auth.MaxCachedKeys < 0 {
+		errs = append(errs, errors.New("auth settings must be >= 0"))
+	}
+	if c.MCP.MaxRequestBodyBytes < 0 {
+		errs = append(errs, errors.New("mcp.max_request_body_bytes must be >= 0"))
+	}
+	if c.Defaults.MaxTokensReserve < 0 || c.Defaults.DefaultMaxTokens < 0 || c.Defaults.EmbedderCacheSize < 0 {
+		errs = append(errs, errors.New("defaults limits must be >= 0"))
+	}
+	if c.Defaults.AgentLoopRepeats < 0 || c.Defaults.AgentLoopWindow < 0 {
+		errs = append(errs, errors.New("defaults.agent_loop settings must be >= 0"))
+	}
+	if c.Defaults.AgentFuzzyThreshold < 0 || c.Defaults.AgentFuzzyThreshold > 1.0 {
+		errs = append(errs, errors.New("defaults.agent_fuzzy_threshold must be between 0 and 1.0"))
+	}
+	if c.Health.ProbeTimeout < 0 {
+		errs = append(errs, errors.New("health.probe_timeout must be >= 0"))
+	}
+	if c.AdminAuth.SessionIdleTimeout < time.Minute {
+		errs = append(errs, errors.New("admin_auth.session_idle_timeout minimum is 1m"))
+	}
+	if c.AdminAuth.SessionAbsTimeout < c.AdminAuth.SessionIdleTimeout {
+		errs = append(errs, errors.New("admin_auth.session_absolute_timeout must be >= session_idle_timeout"))
+	}
+	if c.AdminAuth.MaxLoginAttempts < 1 {
+		errs = append(errs, errors.New("admin_auth.max_login_attempts must be >= 1"))
+	}
+	if c.AdminAuth.LockoutDuration < time.Minute {
+		errs = append(errs, errors.New("admin_auth.lockout_duration minimum is 1m"))
+	}
+	if c.WatcherInterval < 0 || c.OverrideInterval < 0 {
+		errs = append(errs, errors.New("watcher_interval and override_interval must be >= 0"))
+	}
 	if len(c.Providers) == 0 {
 		errs = append(errs, errors.New("at least one provider is required"))
 	}

@@ -33,7 +33,14 @@ func (k kvFlag) Set(v string) error {
 }
 
 func main() {
-	url := flag.String("url", "http://localhost:8080", "base URL (gateway or mock)")
+	defaultURL := os.Getenv("PROOFGATE_BASE_URL")
+	if defaultURL == "" {
+		defaultURL = os.Getenv("PROOFGATE_URL")
+	}
+	if defaultURL == "" {
+		defaultURL = "http://localhost:8080"
+	}
+	url := flag.String("url", defaultURL, "base URL (gateway or mock)")
 	key := flag.String("key", os.Getenv("PROOFGATE_KEY"), "API key; empty for a direct-to-mock baseline")
 	route := flag.String("route", "default", "model/route name")
 	rps := flag.Float64("rps", 200, "requests per second (open loop)")

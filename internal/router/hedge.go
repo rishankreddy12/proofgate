@@ -64,10 +64,19 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 		v, res, err := run(plan)
 		return v, res, false, err
 	}
+	var won bool
 	ctxA, cancelA := context.WithCancel(ctx)
-	defer cancelA()
+	defer func() {
+		if !won {
+			cancelA()
+		}
+	}()
 	ctxB, cancelB := context.WithCancel(ctx)
-	defer cancelB()
+	defer func() {
+		if !won {
+			cancelB()
+		}
+	}()
 	results := make(chan outcome[T], 2)
 	launch := func(c context.Context, t Target) {
 		go func() {
@@ -81,6 +90,7 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 	hedged, pending := false, 1
 	var lastErr error
 	finish := func(winner outcome[T], cancelOther context.CancelFunc) (T, Result, bool, error) {
+		won = true
 		cancelOther()
 		if pending > 1 && discard != nil { // the other attempt may still succeed; release it
 			go func(n int) {

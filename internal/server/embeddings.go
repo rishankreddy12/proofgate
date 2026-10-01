@@ -29,7 +29,7 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 	rt := h.State.Load()
 	p, _ := auth.FromContext(r.Context())
 	var req api.EmbeddingRequest
-	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBody)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, h.maxBody())).Decode(&req); err != nil {
 		api.WriteError(w, api.BadRequest("invalid JSON"))
 		return
 	}

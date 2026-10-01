@@ -136,7 +136,7 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	st := &State{
 		Plan:  plan,
 		Scope: Scope(tenant, c.Route.Name, c.Request, cfg),
-		Query: SemanticText(c.Request),
+		Query: SemanticTextFromHeader(c.Request, hdr),
 		Tags:  ParseTags(hdr.Get("X-ProofGate-Cache-Tags")),
 	}
 	c.Values[StateKey] = st

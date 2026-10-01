@@ -32,7 +32,14 @@ type Middleware struct {
 }
 
 func NewMiddleware(l KeyLookup, ttl, negativeTTL time.Duration) *Middleware {
-	return &Middleware{lookup: l, ttl: ttl, negTTL: negativeTTL, cache: map[string]cacheEntry{}, maxEntries: 100_000}
+	return NewMiddlewareWithConfig(l, ttl, negativeTTL, 100_000)
+}
+
+func NewMiddlewareWithConfig(l KeyLookup, ttl, negativeTTL time.Duration, maxEntries int) *Middleware {
+	if maxEntries <= 0 {
+		maxEntries = 100_000
+	}
+	return &Middleware{lookup: l, ttl: ttl, negTTL: negativeTTL, cache: map[string]cacheEntry{}, maxEntries: maxEntries}
 }
 
 func bearer(r *http.Request) string {

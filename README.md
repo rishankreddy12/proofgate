@@ -82,7 +82,8 @@ Read the full methodology and same-harness comparison with LiteLLM and Bifrost i
 - **Zero Provider SDKs**: Pure Go implementation with standard `net/http` — zero vulnerable third-party Python/Node AI dependencies.
 - **Distroless Hardening**: Non-root UID `65532:65532`, read-only root filesystem, capabilities dropped, no shell (`/bin/sh` does not exist).
 - **Cryptographic Attestations**: SHA-pinned actions, Cosign keyless signatures, Syft SPDX SBOMs, and SLSA provenance.
-- **Machine-Checked Threat Model**: Automated tests verify all 13 STRIDE threat mitigations against active codebase symbols.
+- **Machine-Checked Threat Model**: Automated tests verify all 16 STRIDE threat mitigations against active codebase symbols.
+- **Authenticated Control-Plane & Remote CLI**: Granular human administrator RBAC (`admin`, `operator`, `viewer`), ephemeral Redis sessions with sliding-window idle & absolute timeouts, brute-force lockout protection, and comprehensive audit trail in PostgreSQL.
 
 ---
 
@@ -100,6 +101,7 @@ Read the full methodology and same-harness comparison with LiteLLM and Bifrost i
 | **Third-Party AI SDK Dependencies** | **0 (Pure `net/http`)** | Dozens | 0 |
 | **Container Hardening** | **Distroless (no shell, read-only root)** | Full Ubuntu/Debian OS | Alpine Linux |
 | **Agent Governance & MCP Proxy** | **Yes (Loop detect + Tool filtering)** | No | No |
+| **Authenticated Control-Plane CLI** | **Yes (RBAC + Redis Sessions)** | Basic master key | No |
 
 ---
 
@@ -118,6 +120,7 @@ Read the full methodology and same-harness comparison with LiteLLM and Bifrost i
 
 - [Documentation Index](docs/README.md)
 - [10-Minute Quickstart Guide](docs/quickstart.md)
+- [Admin CLI & Control-Plane Guide](docs/admin-cli.md)
 - [Complete Configuration Reference](docs/configuration.md)
 - [Portability & Data Export Guide](docs/portability.md)
 - [Benchmarks & Competitor Analysis](docs/benchmarks.md)

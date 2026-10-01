@@ -17,20 +17,28 @@ import (
 	"github.com/proofgate/proofgate/internal/telemetry"
 )
 
-const maxBody = 10 << 20
+const defaultMaxBody = 10 << 20
 
 type Handlers struct {
-	State    *State
-	Breakers *router.Breakers
-	Pipeline *pipeline.Pipeline
-	Limiter  ratelimit.Backend // used directly by the embeddings handler
-	Ledger   budget.Ledger     // used directly by the embeddings handler
-	Now      func() time.Time
-	OnEmbed  func(EmbedEvent) // optional metrics hook
-	Health   *health.Tracker
-	Metrics  *telemetry.Metrics
-	Hedges   sync.Map
-	MCP      http.Handler
+	State               *State
+	Breakers            *router.Breakers
+	Pipeline            *pipeline.Pipeline
+	Limiter             ratelimit.Backend // used directly by the embeddings handler
+	Ledger              budget.Ledger     // used directly by the embeddings handler
+	Now                 func() time.Time
+	OnEmbed             func(EmbedEvent) // optional metrics hook
+	Health              *health.Tracker
+	Metrics             *telemetry.Metrics
+	Hedges              sync.Map
+	MCP                 http.Handler
+	MaxRequestBodyBytes int64
+}
+
+func (h *Handlers) maxBody() int64 {
+	if h != nil && h.MaxRequestBodyBytes > 0 {
+		return h.MaxRequestBodyBytes
+	}
+	return defaultMaxBody
 }
 
 func (h *Handlers) hedgeBudget(r *router.Route) *router.HedgeBudget {
@@ -49,7 +57,7 @@ func (h *Handlers) hedgeBudget(r *router.Route) *router.HedgeBudget {
 	return v.(*router.HedgeBudget)
 }
 
-func decodeChat(r *http.Request) (*api.ChatRequest, error) {
+func decodeChat(r *http.Request, maxBody int64) (*api.ChatRequest, error) {
 	var req api.ChatRequest
 	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBody)).Decode(&req); err != nil {
 		var mbe *http.MaxBytesError
@@ -90,7 +98,7 @@ func resolveRoute(rt *Runtime, p auth.Principal, model string, embeddings bool) 
 func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	rt := h.State.Load()
 	p, _ := auth.FromContext(r.Context())
-	req, err := decodeChat(r)
+	req, err := decodeChat(r, h.maxBody())
 	if err != nil {
 		api.WriteError(w, err)
 		return

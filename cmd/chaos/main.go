@@ -25,13 +25,24 @@ func setMode(admin, mode string) {
 }
 
 func main() {
-	url := flag.String("url", "http://localhost:8080", "gateway URL")
+	defaultURL := os.Getenv("PROOFGATE_BASE_URL")
+	if defaultURL == "" {
+		defaultURL = os.Getenv("PROOFGATE_URL")
+	}
+	if defaultURL == "" {
+		defaultURL = "http://localhost:8080"
+	}
+	defaultMockAdmin := os.Getenv("MOCK_ADMIN_URL")
+	if defaultMockAdmin == "" {
+		defaultMockAdmin = "http://localhost:18081"
+	}
+	url := flag.String("url", defaultURL, "gateway URL")
 	key := flag.String("key", os.Getenv("PROOFGATE_KEY"), "API key")
 	route := flag.String("route", "default", "route")
 	rps := flag.Int("rps", 20, "requests per second")
 	before := flag.Duration("before", 20*time.Second, "healthy period")
 	after := flag.Duration("after", 60*time.Second, "period after the slowdown")
-	mockAdmin := flag.String("mock-admin", "http://localhost:18081", "mockllm-a admin URL")
+	mockAdmin := flag.String("mock-admin", defaultMockAdmin, "mockllm-a admin URL")
 	slow := flag.Int("slow-ttft-ms", 3000, "TTFT injected into mockllm-a")
 	healthy := flag.String("healthy", "mock-b/mock-large", "target that should take over")
 	label := flag.String("label", "", "label")

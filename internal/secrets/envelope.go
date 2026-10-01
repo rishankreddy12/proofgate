@@ -60,11 +60,25 @@ func Seal(ctx context.Context, kek KEK, plaintext, aad []byte) (Sealed, error) {
 	return Sealed{KEKID: kek.ID(), WrappedDEK: wrapped, Nonce: nonce, Ciphertext: a.Seal(nil, nonce, plaintext, aad)}, nil
 }
 
+// KEKResolver allows a multi-KEK container to resolve the matching KEK by ID.
+type KEKResolver interface {
+	ResolveKEK(id string) (KEK, bool)
+}
+
 func Open(ctx context.Context, kek KEK, s Sealed, aad []byte) ([]byte, error) {
+	targetKEK := kek
 	if s.KEKID != kek.ID() {
-		return nil, fmt.Errorf("credential was sealed with a different KEK (%s, current %s): rewrap it first", s.KEKID, kek.ID())
+		if res, ok := kek.(KEKResolver); ok {
+			if resolved, found := res.ResolveKEK(s.KEKID); found {
+				targetKEK = resolved
+			} else {
+				return nil, fmt.Errorf("credential was sealed with unknown KEK (%s)", s.KEKID)
+			}
+		} else {
+			return nil, fmt.Errorf("credential was sealed with a different KEK (%s, current %s): rewrap it first", s.KEKID, kek.ID())
+		}
 	}
-	dek, err := kek.Unwrap(ctx, s.WrappedDEK)
+	dek, err := targetKEK.Unwrap(ctx, s.WrappedDEK)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap data key: %w", err)
 	}
@@ -81,10 +95,19 @@ func Open(ctx context.Context, kek KEK, s Sealed, aad []byte) ([]byte, error) {
 }
 
 func Rewrap(ctx context.Context, from, to KEK, s Sealed) (Sealed, error) {
+	fromKEK := from
 	if s.KEKID != from.ID() {
-		return Sealed{}, errors.New("record is not sealed with the source KEK")
+		if res, ok := from.(KEKResolver); ok {
+			if resolved, found := res.ResolveKEK(s.KEKID); found {
+				fromKEK = resolved
+			} else {
+				return Sealed{}, errors.New("record is not sealed with the source KEK")
+			}
+		} else {
+			return Sealed{}, errors.New("record is not sealed with the source KEK")
+		}
 	}
-	dek, err := from.Unwrap(ctx, s.WrappedDEK)
+	dek, err := fromKEK.Unwrap(ctx, s.WrappedDEK)
 	if err != nil {
 		return Sealed{}, err
 	}

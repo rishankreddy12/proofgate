@@ -7,7 +7,14 @@ This document provides an exhaustive reference for `proofgate.yaml`. All fields 
 ## 1. Top-Level Structure
 
 A canonical `proofgate.yaml` is composed of the following top-level blocks:
-- `server`: HTTP listener addresses for data plane and control plane.
+- `server`: HTTP listener addresses, timeouts, and body size limits for data plane and control plane.
+- `database`: PostgreSQL connection string and connection pool tuning.
+- `redis`: Redis connection string for distributed caching and state.
+- `analytics`: ClickHouse connection and asynchronous telemetry batcher tuning.
+- `telemetry`: OpenTelemetry trace collection and service naming.
+- `breakers`: Circuit breaker failure thresholds and cooldown durations.
+- `auth`: Client API key in-memory caching and bounds.
+- `mcp`: Global Model Context Protocol proxy configuration.
 - `secrets`: Zero-trust Key Encryption Key (KEK) and Vault configuration.
 - `providers`: Upstream LLM backend definitions.
 - `pricing`: Model cost rates per 1M tokens.
@@ -17,6 +24,8 @@ A canonical `proofgate.yaml` is composed of the following top-level blocks:
 - `health`: Exponentially Weighted Moving Average (EWMA) health tracker tuning.
 - `mcp_servers`: Model Context Protocol upstream reverse proxy endpoints.
 - `mcp_insecure_hosts`: Whitelisted hosts for unencrypted MCP communication.
+- `watcher_interval`: Dynamic configuration file polling interval.
+- `override_interval`: Dynamic database override polling interval.
 
 ---
 
@@ -27,13 +36,182 @@ Controls bind addresses for client traffic and management APIs.
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `server` | object | - | Root configuration for server listeners. |
-| `addr` | string | `":8080"` | Listen address for public OpenAI-compatible data plane APIs. |
-| `admin_addr` | string | `"127.0.0.1:9090"` | Listen address for private management, reload, metrics, and readiness checks. **Never expose to the public internet.** |
+| `addr` | string | `":8080"` | Listen address for public OpenAI-compatible data plane APIs (overridable via `PROOFGATE_ADDR`). |
+| `admin_addr` | string | `"127.0.0.1:9090"` | Listen address for private management, reload, metrics, and readiness checks (overridable via `PROOFGATE_ADMIN_ADDR`). **Never expose to the public internet.** |
+| `max_request_body_bytes` | integer | `10485760` | Maximum allowed request body size in bytes for chat and embeddings (default 10MB). |
+| `read_header_timeout` | duration | `10s` | Maximum time allowed to read HTTP request headers before closing connection. |
+| `idle_timeout` | duration | `120s` | Maximum time to keep idle keep-alive HTTP connections open. |
+| `drain_timeout` | duration | `30s` | Graceful shutdown drain timeout for in-flight requests. |
 
 ```yaml
 server:
   addr: ":8080"
   admin_addr: "0.0.0.0:9090"
+  max_request_body_bytes: 10485760
+  read_header_timeout: 10s
+  idle_timeout: 120s
+  drain_timeout: 30s
+```
+
+---
+
+## 2.1 Database Configuration (`database`)
+
+Configures persistent state and metadata storage in PostgreSQL.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `database` | object | - | PostgreSQL persistence configuration. |
+| `url` | string | `""` | PostgreSQL connection URL (e.g. `postgres://user:pass@host:5432/db`). Falls back to `DATABASE_URL` environment variable. |
+| `max_conns` | integer | `20` | Maximum number of concurrent connections in the PostgreSQL connection pool. |
+
+```yaml
+database:
+  url: postgres://proofgate:proofgate@postgres:5432/proofgate?sslmode=disable
+  max_conns: 20
+```
+
+---
+
+## 2.2 Redis Configuration (`redis`)
+
+Configures distributed caching, token bucket rate limiting, and agent run state tracking.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `redis` | object | - | Redis backend configuration. |
+| `url` | string | `""` | Redis connection URL (e.g. `redis://redis:6379/0`). Falls back to `REDIS_URL` environment variable. |
+
+```yaml
+redis:
+  url: redis://redis:6379/0
+```
+
+---
+
+## 2.3 Analytics & Batchers (`analytics`)
+
+Configures ClickHouse telemetry ingestion and asynchronous event batching queues.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `analytics` | object | - | Analytics and ClickHouse event logging settings. |
+| `clickhouse_dsn` | string | `""` | ClickHouse connection DSN. Falls back to `CLICKHOUSE_DSN` environment variable. |
+| `usage_batcher` | object | - | Batcher queue configuration for standard usage events. |
+| `mcp_batcher` | object | - | Batcher queue configuration for MCP audit events. |
+| `capacity` | integer | `50000` / `20000` | Maximum in-memory ring buffer capacity before dropping events. |
+| `batch_size` | integer | `5000` / `2000` | Number of events buffered before triggering a bulk insert. |
+| `flush_interval` | duration | `1s` | Maximum time to wait before flushing pending records. |
+| `flush_timeout` | duration | `10s` | Maximum time allowed to flush pending analytics during gateway shutdown. |
+
+```yaml
+analytics:
+  clickhouse_dsn: clickhouse://proofgate:proofgate@clickhouse:9000/proofgate
+  usage_batcher:
+    capacity: 50000
+    batch_size: 5000
+    flush_interval: 1s
+  mcp_batcher:
+    capacity: 20000
+    batch_size: 2000
+    flush_interval: 1s
+  flush_timeout: 10s
+```
+
+---
+
+## 2.4 Distributed Tracing (`telemetry`)
+
+Configures OpenTelemetry distributed tracing and export.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `telemetry` | object | - | OpenTelemetry exporter configuration. |
+| `otlp_endpoint` | string | `""` | OTLP/HTTP collector endpoint. Falls back to `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. |
+| `service_name` | string | `"proofgate"` | Service name attribute attached to emitted spans. |
+
+```yaml
+telemetry:
+  otlp_endpoint: http://otel-collector:4318
+  service_name: proofgate
+```
+
+---
+
+## 2.5 Circuit Breakers (`breakers`)
+
+Configures automatic fault isolation when upstreams fail.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `breakers` | object | - | Global circuit breaker parameters. |
+| `threshold` | integer | `5` | Consecutive upstream failures before tripping breaker open. |
+| `cooldown` | duration | `30s` | Time window a tripped target remains open before admitting a canary probe. |
+
+```yaml
+breakers:
+  threshold: 5
+  cooldown: 30s
+```
+
+---
+
+## 2.6 Authentication Cache (`auth`)
+
+Configures in-memory key authentication validation and negative caching.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `auth` | object | - | Gateway authentication middleware tuning. |
+| `cache_ttl` | duration | `30s` | In-memory cache duration for valid tenant API keys. |
+| `negative_cache_ttl` | duration | `5s` | In-memory cache duration for rejected/invalid API keys to mitigate brute-force lookups. |
+| `max_cached_keys` | integer | `100000` | Upper bound on cached keys to prevent memory exhaustion under attack. |
+
+```yaml
+auth:
+  cache_ttl: 30s
+  negative_cache_ttl: 5s
+  max_cached_keys: 100000
+```
+
+---
+
+## 2.7 Global MCP Proxy (`mcp`)
+
+Global options for the Model Context Protocol reverse proxy.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `mcp` | object | - | Global MCP proxy options. |
+| `max_request_body_bytes` | integer | `4194304` | Maximum allowed request body size in bytes for MCP JSON-RPC payloads (default 4MB). |
+
+```yaml
+mcp:
+  max_request_body_bytes: 4194304
+```
+
+---
+
+## 2.8 Admin Control-Plane Authentication (`admin_auth`)
+
+Controls authentication, session management, and rate limiting for the administrative control-plane API.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `admin_auth` | object | - | Control-plane admin authentication settings. |
+| `enabled` | boolean | `false` | When `true`, enables session-based RBAC authentication for control-plane endpoints. |
+| `max_login_attempts` | integer | `5` | Maximum consecutive failed login attempts before temporary account lockout. |
+| `lockout_duration` | duration | `15m` | Lockout duration after exceeding maximum login attempts. |
+| `session_idle_timeout` | duration | `30m` | Session inactivity timeout before requiring re-authentication. |
+| `session_absolute_timeout` | duration | `12h` | Maximum total lifetime of an administrative session. |
+
+```yaml
+admin_auth:
+  enabled: false
+  max_login_attempts: 5
+  lockout_duration: 15m
+  session_idle_timeout: 30m
+  session_absolute_timeout: 12h
 ```
 
 ---
@@ -51,7 +229,9 @@ Controls envelope encryption and Key Encryption Key (KEK) management.
 | `vault_key` | string | `""` | Name of Vault Transit key used to wrap DEKs. |
 | `vault_auth` | string | `"token"` | Vault authentication mode: `"token"` (via `VAULT_TOKEN`) or `"kubernetes"`. |
 | `vault_role` | string | `""` | Vault Kubernetes auth role name. |
+| `vault_token_file` | string | `"/var/run/secrets/kubernetes.io/serviceaccount/token"` | Path to Kubernetes service account token file for Vault authentication. |
 | `cache_ttl` | duration | `60s` | Maximum TTL for decrypted in-memory provider credentials before automatic eviction. |
+| `tenant_keks` | map | `{}` | Per-tenant Key Encryption Key override map for dedicated KMS/Vault keys. |
 
 ```yaml
 secrets:
@@ -203,6 +383,11 @@ Proactive racing of slow requests configured under `routes[].hedge`.
 | `defaults` | object | - | Global default parameters. |
 | `max_tokens_reserve` | integer | `4096` | Upper limit on completion tokens reserved during rate limit admission checks. |
 | `default_max_tokens` | integer | `2048` | Fallback max tokens when client omits `max_tokens` in request. |
+| `agent_run_ttl` | duration | `1h` | Default time-to-live for tracking autonomous agent run state in Redis. |
+| `agent_loop_repeats` | integer | `3` | Default repeat count triggering loop prevention when policy omits it. |
+| `agent_loop_window` | integer | `20` | Default step window for evaluating loop detection history. |
+| `agent_fuzzy_threshold` | float | `0.95` | Default semantic cosine similarity threshold for fuzzy loop detection. |
+| `embedder_cache_size` | integer | `10000` | In-memory LRU cache capacity for semantic cache embedding vectors. |
 
 ---
 
@@ -229,6 +414,18 @@ Defines latency and error budgets per target model for health degradation tracki
 | `recover` | duration | `30s` | Continuous clean window required to restore target from degraded to healthy. |
 | `min_samples` | integer | `10` | Minimum request samples before evaluating degradation. |
 | `probe_interval` | duration | `5s` | Interval between synthetic background probes for degraded targets. |
+| `probe_timeout` | duration | `10s` | Maximum execution timeout for synthetic background health probes. |
+| `gossip_addr` | string | `""` | Local bind address for cluster health gossip memberlist (e.g. `0.0.0.0:7946`). |
+| `gossip_peers` | list | `[]` | Seed list of peer addresses for health state synchronization across the cluster. |
+
+---
+
+## 13.1 Dynamic Polling Intervals
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `watcher_interval` | duration | `5s` | Interval between polling `proofgate.yaml` for configuration reload. |
+| `override_interval` | duration | `10s` | Interval between polling PostgreSQL database for runtime routing overrides. |
 
 ---
 
@@ -241,6 +438,19 @@ Defines latency and error budgets per target model for health degradation tracki
 | `url` | string | - | Upstream MCP server URL (e.g. `https://mcp.internal:8443`). |
 | `headers_env` | map | `{}` | Map of HTTP header names to environment variable names holding credentials. |
 | `mcp_insecure_hosts` | list | `[]` | List of hostnames allowed to connect over unencrypted HTTP (default requires HTTPS). |
+
+---
+
+## 15. Model Capabilities (`capabilities`)
+
+Defines token limits, multimodal capabilities, and tool support constraints per model.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `capabilities` | map | `{}` | Map of capability constraints keyed by model identifier. |
+| `max_context_tokens` | integer | `0` | Upper limit on total context window token count. |
+| `supports_vision` | boolean | `false` | Whether model accepts multimodal vision/image inputs. |
+| `supports_tools` | boolean | `nil` | Whether model supports tool/function calling (`nil` falls back to provider default). |
 
 ---
 

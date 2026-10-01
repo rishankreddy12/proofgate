@@ -11,7 +11,7 @@ type CredentialSource interface {
 }
 
 type cached struct {
-	value   string
+	value   []byte
 	expires time.Time
 }
 
@@ -36,7 +36,7 @@ func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 	k.mu.Lock()
 	if c, ok := k.m[provider]; ok && k.now().Before(c.expires) {
 		k.mu.Unlock()
-		return c.value, nil
+		return string(c.value), nil
 	}
 	k.mu.Unlock()
 	s, _, err := k.src.ActiveCredential(ctx, provider)
@@ -48,16 +48,18 @@ func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 		return "", err
 	}
 	v := string(pt)
-	zero(pt)
 	k.onSecret(v)
 	k.mu.Lock()
-	k.m[provider] = cached{value: v, expires: k.now().Add(k.ttl)}
+	k.m[provider] = cached{value: pt, expires: k.now().Add(k.ttl)}
 	k.mu.Unlock()
 	return v, nil
 }
 
 func (k *KeyCache) Purge() {
 	k.mu.Lock()
+	for _, c := range k.m {
+		zero(c.value)
+	}
 	k.m = map[string]cached{}
 	k.mu.Unlock()
 }

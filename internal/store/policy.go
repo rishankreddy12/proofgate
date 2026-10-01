@@ -16,13 +16,15 @@ type TenantPolicy struct {
 func (p TenantPolicy) BudgetMicros() int64 { return int64(math.Round(p.MonthlyBudgetUSD * 1e6)) }
 
 type RunPolicy struct {
-	MaxCostUSD   float64       `json:"max_cost_usd"`
-	MaxSteps     int           `json:"max_steps"`
-	MaxTokens    int           `json:"max_tokens"`
-	TTL          time.Duration `json:"ttl"`
-	RequireRunID bool          `json:"require_run_id"`
-	LoopRepeats  int           `json:"loop_repeats"`
-	LoopWindow   int           `json:"loop_window"`
+	MaxCostUSD     float64       `json:"max_cost_usd"`
+	MaxSteps       int           `json:"max_steps"`
+	MaxTokens      int           `json:"max_tokens"`
+	TTL            time.Duration `json:"ttl"`
+	RequireRunID   bool          `json:"require_run_id"`
+	LoopRepeats    int           `json:"loop_repeats"`
+	LoopWindow     int           `json:"loop_window"`
+	FuzzyLoop      bool          `json:"fuzzy_loop"`
+	FuzzyThreshold float64       `json:"fuzzy_threshold"`
 }
 
 func (p RunPolicy) WithDefaults() RunPolicy {
@@ -34,6 +36,9 @@ func (p RunPolicy) WithDefaults() RunPolicy {
 	}
 	if p.LoopWindow == 0 {
 		p.LoopWindow = 20
+	}
+	if p.FuzzyThreshold <= 0 {
+		p.FuzzyThreshold = 0.95
 	}
 	return p
 }

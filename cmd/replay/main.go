@@ -22,7 +22,14 @@ type line struct {
 }
 
 func main() {
-	url := flag.String("url", "http://localhost:8080", "gateway base URL")
+	defaultURL := os.Getenv("PROOFGATE_BASE_URL")
+	if defaultURL == "" {
+		defaultURL = os.Getenv("PROOFGATE_URL")
+	}
+	if defaultURL == "" {
+		defaultURL = "http://localhost:8080"
+	}
+	url := flag.String("url", defaultURL, "gateway base URL")
 	key := flag.String("key", os.Getenv("PROOFGATE_KEY"), "API key")
 	file := flag.String("file", "bench/datasets/qqp-replay.jsonl", "replay file")
 	route := flag.String("route", "faq", "route to use as model")

@@ -118,6 +118,19 @@ func SemanticText(req *api.ChatRequest) string {
 	return ""
 }
 
+// SemanticTextFromHeader returns the query text to use for semantic embeddings.
+// If the X-ProofGate-Cache-Query header is provided, it uses that text instead of
+// extracting from the full request messages (e.g. for RAG workloads where the user
+// message contains massive context documents).
+func SemanticTextFromHeader(req *api.ChatRequest, hdr http.Header) string {
+	if hdr != nil {
+		if q := strings.TrimSpace(hdr.Get("X-ProofGate-Cache-Query")); q != "" {
+			return q
+		}
+	}
+	return SemanticText(req)
+}
+
 var tagRe = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
 func ParseTags(h string) []string {

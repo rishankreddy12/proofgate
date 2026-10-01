@@ -39,14 +39,14 @@ func (h *Handlers) observe(s health.Sample) {
 func planFor(rt *Runtime, c *pipeline.Call) []router.Target {
 	if c.Target.Provider != "" && c.Target.Model != "" {
 		plan := []router.Target{c.Target}
-		for _, t := range rt.Router.Plan(c.Route) {
+		for _, t := range rt.Router.Plan(c.Route, c.Request) {
 			if t != c.Target {
 				plan = append(plan, t)
 			}
 		}
 		return rt.Router.Order(plan)
 	}
-	return rt.Router.Plan(c.Route)
+	return rt.Router.Plan(c.Route, c.Request)
 }
 
 // price fills Usage (estimated if the provider sent none) and CostMicros.

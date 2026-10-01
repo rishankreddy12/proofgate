@@ -30,10 +30,11 @@ type Audit struct {
 }
 
 type Deps struct {
-	Upstreams func() map[string]Upstream
-	Runs      agentrun.Store
-	Audit     func(Audit) bool
-	Client    *http.Client
+	Upstreams           func() map[string]Upstream
+	Runs                agentrun.Store
+	Audit               func(Audit) bool
+	Client              *http.Client
+	MaxRequestBodyBytes int64
 }
 
 type Proxy struct{ d Deps }
@@ -81,7 +82,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.passthrough(w, r, up, nil)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+	maxBody := p.d.MaxRequestBodyBytes
+	if maxBody <= 0 {
+		maxBody = 4 << 20
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 	if err != nil {
 		api.WriteError(w, api.BadRequest("body too large or unreadable"))
 		return

@@ -11,12 +11,14 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/proofgate/proofgate/internal/adminauth"
 	"github.com/proofgate/proofgate/internal/agentrun"
 	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/api"
@@ -40,11 +42,31 @@ import (
 )
 
 func main() {
-	cfgPath := flag.String("config", "/etc/proofgate/proofgate.yaml", "config file")
+	defaultCfg := "/etc/proofgate/proofgate.yaml"
+	if env := os.Getenv("PROOFGATE_CONFIG"); env != "" {
+		defaultCfg = env
+	}
+	cfgPath := flag.String("config", defaultCfg, "config file")
 	healthcheck := flag.Bool("healthcheck", false, "probe the local /healthz and exit")
+	healthURL := flag.String("healthcheck-url", "", "URL to probe for healthcheck (overrides default)")
 	flag.Parse()
 	if *healthcheck {
-		resp, err := http.Get("http://127.0.0.1:8080/healthz") //nolint:noctx
+		targetURL := *healthURL
+		if targetURL == "" {
+			targetURL = os.Getenv("PROOFGATE_HEALTHCHECK_URL")
+		}
+		if targetURL == "" {
+			if cfg, err := config.Load(*cfgPath); err == nil && cfg.Server.Addr != "" {
+				addr := cfg.Server.Addr
+				if strings.HasPrefix(addr, ":") {
+					addr = "127.0.0.1" + addr
+				}
+				targetURL = "http://" + addr + "/healthz"
+			} else {
+				targetURL = "http://127.0.0.1:8080/healthz"
+			}
+		}
+		resp, err := http.Get(targetURL) //nolint:noctx
 		if err != nil || resp.StatusCode != 200 {
 			os.Exit(1)
 		}
@@ -68,6 +90,7 @@ func needsDBKeys(cfg *config.Config) bool {
 }
 
 func run(cfgPath string, scrubber *telemetry.Scrubber) error {
+	startTime := time.Now()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -82,11 +105,11 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 			}
 		}
 	}
-	shutdownTracing, err := telemetry.SetupTracing(ctx, "proofgate")
+	shutdownTracing, err := telemetry.SetupTracingWithEndpoint(ctx, cfg.Telemetry.ServiceName, cfg.Telemetry.OTLPEndpoint)
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(ctx, os.Getenv("DATABASE_URL"))
+	st, err := store.OpenWithConfig(ctx, cfg.Database.URL, cfg.Database.MaxConns)
 	if err != nil {
 		return err
 	}
@@ -94,7 +117,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
-	ropt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+	ropt, err := redis.ParseURL(cfg.Redis.URL)
 	if err != nil {
 		return err
 	}
@@ -102,7 +125,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	rdb := redis.NewClient(ropt)
 	defer rdb.Close()
 
-	chConn, err := analytics.Open(ctx, os.Getenv("CLICKHOUSE_DSN"))
+	chConn, err := analytics.Open(ctx, cfg.Analytics.ClickHouseDSN)
 	if err != nil {
 		return err
 	}
@@ -111,13 +134,23 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	}
 	metrics := telemetry.NewMetrics()
 	usageDropped := metrics.Counter("proofgate_analytics_dropped_total", "Analytics rows dropped because the queue was full.", "table")
-	usage := analytics.NewBatcher("usage_events", 50_000, 5_000, time.Second, analytics.InsertUsage(chConn),
+	usage := analytics.NewBatcher("usage_events", cfg.Analytics.UsageBatcher.Capacity, cfg.Analytics.UsageBatcher.BatchSize, cfg.Analytics.UsageBatcher.FlushInterval, analytics.InsertUsage(chConn),
 		func() { usageDropped.WithLabelValues("usage_events").Inc() })
 
-	kek, err := secrets.FromConfig(cfg.Secrets.KEK, cfg.Secrets.LocalKEKFile, cfg.Secrets.VaultAddr, cfg.Secrets.VaultKey,
-		cfg.Secrets.VaultAuth, cfg.Secrets.VaultRole)
+	kek, err := secrets.FromConfigWithOptions(cfg.Secrets.KEK, cfg.Secrets.LocalKEKFile, cfg.Secrets.VaultAddr, cfg.Secrets.VaultKey,
+		cfg.Secrets.VaultAuth, cfg.Secrets.VaultRole, cfg.Secrets.VaultTokenFile)
 	if err != nil && needsDBKeys(cfg) {
 		return err
+	}
+	if kek != nil && len(cfg.Secrets.TenantKEKs) > 0 {
+		tenantKEKs := make(map[string]secrets.KEK, len(cfg.Secrets.TenantKEKs))
+		for tid, tcfg := range cfg.Secrets.TenantKEKs {
+			tkek, terr := secrets.FromConfigWithOptions(tcfg.KEK, tcfg.LocalKEKFile, tcfg.VaultAddr, tcfg.VaultKey, tcfg.VaultAuth, tcfg.VaultRole, tcfg.VaultTokenFile)
+			if terr == nil && tkek != nil {
+				tenantKEKs[tid] = tkek
+			}
+		}
+		kek = secrets.NewMultiKEK(kek, tenantKEKs)
 	}
 	var keyCache *secrets.KeyCache
 	if kek != nil {
@@ -132,7 +165,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		}
 	}
 
-	breakers := router.NewBreakers(5, 30*time.Second, time.Now)
+	breakers := router.NewBreakers(cfg.Breakers.Threshold, cfg.Breakers.Cooldown, time.Now)
 	rt, err := server.BuildRuntime(cfg, breakers, os.Getenv, keys)
 	if err != nil {
 		return err
@@ -171,7 +204,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		}
 		return vecs[0], nil
 	})
-	embedder := cache.NewLRUEmbedder(embedFunc, 10_000)
+	embedder := cache.NewLRUEmbedder(embedFunc, cfg.Defaults.EmbedderCacheSize)
 
 	cacheErrors := metrics.Counter("proofgate_cache_errors_total", "Cache errors by operation.", "op")
 	cacheDropped := metrics.Counter("proofgate_cache_dropped_total", "Cache write tasks dropped due to worker congestion.")
@@ -182,33 +215,38 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	)
 
 	runs := agentrun.NewRedisStore(rdb)
+	fuzzyDetector := agentrun.NewFuzzyDetector(embedFunc, agentrun.NewRedisFuzzyStore(rdb))
 
 	// Order matters: After runs in reverse, so metrics and trace (first) observe the final state (last).
 	pipe := pipeline.New(
 		metrics.Stage(),
 		telemetry.TraceStage(),
 		analytics.UsageStage(usage.Emit),
-		agentrun.NewStage(runs),
+		agentrun.NewStageWithDefaults(runs, cfg.Defaults.DefaultMaxTokens, fuzzyDetector),
 		guard.NewStage(),
 		cacheStage,
 		ratelimit.NewStage(limiter, cfg.Defaults.MaxTokensReserve, cfg.Defaults.DefaultMaxTokens, metrics.FailOpen.Inc),
 		budget.NewStage(ledger, time.Now),
 	)
 	h = &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now, Health: tracker, Metrics: metrics,
+		MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,
 		OnEmbed: func(ev server.EmbedEvent) {
 			metrics.ObserveEmbed(ev.Route, ev.Target, telemetry.StatusOf(ev.Err), ev.Tokens, ev.CostMicros, ev.Duration)
 			usage.Emit(analytics.UsageEvent{TS: time.Now().Add(-ev.Duration), RequestID: uuid.NewString(), TenantID: ev.Principal.TenantID,
 				KeyID: ev.Principal.KeyID, Route: ev.Route, Target: ev.Target, Kind: "embeddings", Status: telemetry.StatusOf(ev.Err),
 				Cache: "none", PromptTokens: uint32(ev.Tokens), CostMicros: ev.CostMicros, LatencyMs: uint32(ev.Duration.Milliseconds())})
 		}}
-	mcpAudit := analytics.NewBatcher("mcp_calls", 20_000, 2_000, time.Second, analytics.InsertMCP(chConn),
+	mcpAudit := analytics.NewBatcher("mcp_calls", cfg.Analytics.MCPBatcher.Capacity, cfg.Analytics.MCPBatcher.BatchSize, cfg.Analytics.MCPBatcher.FlushInterval, analytics.InsertMCP(chConn),
 		func() { usageDropped.WithLabelValues("mcp_calls").Inc() })
+
 	h.MCP = mcpproxy.New(mcpproxy.Deps{
-		Upstreams: func() map[string]mcpproxy.Upstream { return state.Load().MCP },
-		Runs:      runs,
-		Audit:     mcpAudit.Emit,
+		Upstreams:           func() map[string]mcpproxy.Upstream { return state.Load().MCP },
+		Runs:                runs,
+		Audit:               mcpAudit.Emit,
+		MaxRequestBodyBytes: cfg.MCP.MaxRequestBodyBytes,
 	})
-	authMW := auth.NewMiddleware(st, 30*time.Second, 5*time.Second)
+
+	authMW := auth.NewMiddlewareWithConfig(st, cfg.Auth.CacheTTL, cfg.Auth.NegativeCacheTTL, cfg.Auth.MaxCachedKeys)
 
 	var (
 		rtMu    sync.Mutex
@@ -232,7 +270,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		state.Store(next)
 	}
 
-	watcher := config.NewWatcher(cfgPath, 5*time.Second, func(c *config.Config) {
+	watcher := config.NewWatcher(cfgPath, cfg.WatcherInterval, func(c *config.Config) {
 		rtMu.Lock()
 		fileCfg = c
 		rtMu.Unlock()
@@ -240,7 +278,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	})
 	go watcher.Run(ctx)
 
-	go server.PollOverrides(ctx, st, 10*time.Second, func(ovs []store.Override) {
+	go server.PollOverrides(ctx, st, cfg.OverrideInterval, func(ovs []store.Override) {
 		rtMu.Lock()
 		changed := !reflect.DeepEqual(ovs, lastOvs)
 		lastOvs = ovs
@@ -256,7 +294,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		if !ok {
 			return 0, errors.New("unknown provider")
 		}
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, cfg.Health.ProbeTimeout)
 		defer cancel()
 		start := time.Now()
 		st, err := p.ChatStream(ctx, t.Model, &api.ChatRequest{MaxTokens: &one,
@@ -271,20 +309,23 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		return time.Since(start), nil
 	}
 	go health.NewProber(tracker, probe, cfg.Health.ProbeInterval).Run(ctx)
+	if cfg.Health.GossipAddr != "" {
+		gossip := health.NewGossip(cfg.Health.GossipAddr, cfg.Health.GossipPeers, tracker, cfg.Health.ProbeInterval)
+		if err := gossip.Start(); err == nil {
+			defer gossip.Stop()
+		}
+	}
 
 	public := &http.Server{Addr: cfg.Server.Addr, Handler: telemetry.Tracing(telemetry.AccessLog(h.Routes(authMW.Handler))),
-		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout, IdleTimeout: cfg.Server.IdleTimeout}
+
+	var adminAuthSvc *adminauth.Service
+	if cfg.AdminAuth.Enabled {
+		adminAuthSvc = adminauth.NewService(st, rdb, cfg.AdminAuth, scrubber)
+	}
 
 	admin := http.NewServeMux()
 	admin.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
-	admin.HandleFunc("GET /admin/health", h.HealthAdmin)
-	admin.HandleFunc("POST /admin/cache/purge", server.AdminCachePurgeHandler(rdb))
-	admin.HandleFunc("POST /admin/secrets/purge", func(w http.ResponseWriter, _ *http.Request) {
-		if keyCache != nil {
-			keyCache.Purge()
-		}
-		w.WriteHeader(200)
-	})
 	admin.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := st.Ping(r.Context()); err != nil {
 			http.Error(w, "postgres: "+err.Error(), 503)
@@ -296,17 +337,32 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		}
 		w.WriteHeader(200)
 	})
-	admin.HandleFunc("POST /admin/reload", func(w http.ResponseWriter, _ *http.Request) {
-		if err := watcher.Reload(); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		w.WriteHeader(204)
-	})
 	admin.HandleFunc("GET /debug/pprof/", pprof.Index)
 	admin.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
 	admin.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
-	adminSrv := &http.Server{Addr: cfg.Server.AdminAddr, Handler: admin, ReadHeaderTimeout: 10 * time.Second}
+
+	cpDeps := &server.ControlPlaneDeps{
+		State:        state,
+		Store:        st,
+		Redis:        rdb,
+		AuthService:  adminAuthSvc,
+		ReloadFunc:   watcher.Reload,
+		PurgeCache:   server.AdminCachePurgeHandler(rdb),
+		PurgeSecrets: func() {
+			if keyCache != nil {
+				keyCache.Purge()
+			}
+		},
+		KEK:         kek,
+		KeyCache:    keyCache,
+		HealthAdmin: h.HealthAdmin,
+		Handlers:    h,
+		StartTime:   startTime,
+		AdminAddr:   cfg.Server.AdminAddr,
+		ServerAddr:  cfg.Server.Addr,
+	}
+	server.RegisterAdminRoutes(admin, cpDeps, cfg.AdminAuth.Enabled)
+	adminSrv := &http.Server{Addr: cfg.Server.AdminAddr, Handler: admin, ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout}
 
 	go func() {
 		t := time.NewTicker(5 * time.Second)
@@ -338,7 +394,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		}
 	}
 	slog.Info("shutting down, draining in-flight requests")
-	sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	sctx, cancel := context.WithTimeout(context.Background(), cfg.Server.DrainTimeout)
 	defer cancel()
 	_ = adminSrv.Shutdown(sctx)
 	if err := public.Shutdown(sctx); err != nil {
@@ -347,7 +403,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	cacheStage.Wait()
 	
 	// Create a fresh context for final flush because the drain context might already be expired
-	fctx, fcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	fctx, fcancel := context.WithTimeout(context.Background(), cfg.Analytics.FlushTimeout)
 	defer fcancel()
 	if err := usage.Close(fctx); err != nil {
 		slog.Warn("usage analytics close failed", "err", err)
@@ -357,3 +413,4 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	}
 	return shutdownTracing(fctx)
 }
+

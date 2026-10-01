@@ -7,6 +7,11 @@ import (
 
 // FromConfig builds the configured KEK.
 func FromConfig(kind, localFile, vaultAddr, vaultKey, vaultAuth, vaultRole string) (KEK, error) {
+	return FromConfigWithOptions(kind, localFile, vaultAddr, vaultKey, vaultAuth, vaultRole, "")
+}
+
+// FromConfigWithOptions builds the configured KEK with optional token file for Kubernetes auth.
+func FromConfigWithOptions(kind, localFile, vaultAddr, vaultKey, vaultAuth, vaultRole, vaultTokenFile string) (KEK, error) {
 	switch kind {
 	case "local":
 		return LoadLocalKEK(localFile)
@@ -14,7 +19,11 @@ func FromConfig(kind, localFile, vaultAddr, vaultKey, vaultAuth, vaultRole strin
 		var ts TokenSource
 		switch vaultAuth {
 		case "kubernetes":
-			ts = KubernetesAuth(vaultAddr, vaultRole, "/var/run/secrets/kubernetes.io/serviceaccount/token", nil)
+			tokenPath := vaultTokenFile
+			if tokenPath == "" {
+				tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+			}
+			ts = KubernetesAuth(vaultAddr, vaultRole, tokenPath, nil)
 		default:
 			ts = StaticToken(os.Getenv("VAULT_TOKEN"))
 		}

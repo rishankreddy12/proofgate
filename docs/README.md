@@ -7,6 +7,7 @@ Welcome to the comprehensive documentation for **ProofGate** — the enterprise 
 ## Getting Started & Architecture
 
 - **[10-Minute Quickstart](quickstart.md)**: From a clean clone to a working, OpenAI-compatible completion request in minutes, with zero external API keys needed.
+- **[Admin CLI & Control-Plane Guide](admin-cli.md)**: Complete command reference, profile management, and RBAC security for remote administration via `proofgatectl`.
 - **[Configuration Reference](configuration.md)**: Complete, machine-verified reference for `proofgate.yaml`, covering routes, caching, SLOS, providers, and security.
 - **[Portability & No-Lock-In Guide](portability.md)**: Details on open standards (OpenAI API, OpenTelemetry), customer data ownership, and migration guides.
 - **[Autonomous Agent Governance & MCP Proxy](agents.md)**: Loop detection, per-run token and cost budgets, and secure Model Context Protocol reverse proxying.

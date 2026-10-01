@@ -4,7 +4,7 @@ WORKDIR /src
 COPY . .
 ARG VERSION=dev
 RUN if [ -f deploy/bin/proofgate ] && [ -f deploy/bin/proofgatectl ]; then \
-      mkdir -p /out && cp deploy/bin/proofgate deploy/bin/proofgatectl /out/; \
+      mkdir -p /out && cp deploy/bin/proofgate deploy/bin/proofgatectl /out/ && chmod 0755 /out/*; \
     else \
       go mod download && \
       CGO_ENABLED=0 GOFLAGS=-mod=readonly go build -trimpath -buildvcs=true \
@@ -13,7 +13,7 @@ RUN if [ -f deploy/bin/proofgate ] && [ -f deploy/bin/proofgatectl ]; then \
     fi
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
-COPY --from=build /out/ /usr/local/bin/
+COPY --from=build --chmod=0755 /out/ /usr/local/bin/
 COPY deploy/proofgate.yaml /etc/proofgate/proofgate.yaml
 USER nonroot:nonroot
 EXPOSE 8080 9090

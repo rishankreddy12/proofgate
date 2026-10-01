@@ -18,6 +18,7 @@ x-gateway: &gateway
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     EASYCLI_API_KEY: ${EASYCLI_API_KEY:-123456}
+    PROOFGATE_ALLOW_INSECURE_LOCAL: "true"
   extra_hosts:
     - "host.docker.internal:host-gateway"
   volumes:
@@ -90,7 +91,6 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
-      GF_INSTALL_PLUGINS: "grafana-clickhouse-datasource"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro

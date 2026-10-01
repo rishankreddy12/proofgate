@@ -9,15 +9,34 @@ import (
 	"time"
 
 	"github.com/proofgate/proofgate/internal/analytics"
+	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/proof"
 )
 
 func runLabelCache(ctx context.Context, route string, limit int, chURL string) {
 	if chURL == "" {
+		chURL = os.Getenv("CLICKHOUSE_DSN")
+	}
+	if chURL == "" {
 		chURL = os.Getenv("CLICKHOUSE_URL")
 	}
 	if chURL == "" {
-		chURL = "clickhouse://pg:pg@127.0.0.1:19000/proofgate"
+		cfgPath := os.Getenv("PROOFGATE_CONFIG")
+		if cfgPath == "" {
+			if _, err := os.Stat("proofgate.yaml"); err == nil {
+				cfgPath = "proofgate.yaml"
+			} else if _, err := os.Stat("deploy/proofgate.yaml"); err == nil {
+				cfgPath = "deploy/proofgate.yaml"
+			}
+		}
+		if cfgPath != "" {
+			if cfg, err := config.Load(cfgPath); err == nil && cfg.Analytics.ClickHouseDSN != "" {
+				chURL = cfg.Analytics.ClickHouseDSN
+			}
+		}
+	}
+	if chURL == "" {
+		chURL = "clickhouse://proofgate:proofgate@127.0.0.1:19000/proofgate"
 	}
 	conn, err := analytics.Open(ctx, chURL)
 	if err != nil {

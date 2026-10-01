@@ -85,3 +85,100 @@ func TestWatcherReloadsOnlyValidChanges(t *testing.T) {
 	require.NoError(t, os.WriteFile(p, append(good, []byte("\n# edit\n")...), 0o600))
 	require.Eventually(t, func() bool { return calls.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
+
+func TestOperationalConfigDefaults(t *testing.T) {
+	c, err := Parse([]byte(`
+providers: [{name: a, type: openai, base_url: "http://a"}]
+routes: [{name: r, targets: [{provider: a, model: m}]}]
+`))
+	require.NoError(t, err)
+	// Server defaults
+	require.Equal(t, int64(10<<20), c.Server.MaxRequestBodyBytes)
+	require.Equal(t, 10*time.Second, c.Server.ReadHeaderTimeout)
+	require.Equal(t, 120*time.Second, c.Server.IdleTimeout)
+	require.Equal(t, 30*time.Second, c.Server.DrainTimeout)
+
+	// Database defaults
+	require.Equal(t, 20, c.Database.MaxConns)
+
+	// Analytics defaults
+	require.Equal(t, 50_000, c.Analytics.UsageBatcher.Capacity)
+	require.Equal(t, 5_000, c.Analytics.UsageBatcher.BatchSize)
+	require.Equal(t, time.Second, c.Analytics.UsageBatcher.FlushInterval)
+	require.Equal(t, 20_000, c.Analytics.MCPBatcher.Capacity)
+	require.Equal(t, 2_000, c.Analytics.MCPBatcher.BatchSize)
+	require.Equal(t, time.Second, c.Analytics.MCPBatcher.FlushInterval)
+	require.Equal(t, 10*time.Second, c.Analytics.FlushTimeout)
+
+	// Breakers defaults
+	require.Equal(t, 5, c.Breakers.Threshold)
+	require.Equal(t, 30*time.Second, c.Breakers.Cooldown)
+
+	// Auth defaults
+	require.Equal(t, 30*time.Second, c.Auth.CacheTTL)
+	require.Equal(t, 5*time.Second, c.Auth.NegativeCacheTTL)
+	require.Equal(t, 100_000, c.Auth.MaxCachedKeys)
+
+	// MCP defaults
+	require.Equal(t, int64(4<<20), c.MCP.MaxRequestBodyBytes)
+
+	// Defaults block
+	require.Equal(t, time.Hour, c.Defaults.AgentRunTTL)
+	require.Equal(t, 3, c.Defaults.AgentLoopRepeats)
+	require.Equal(t, 20, c.Defaults.AgentLoopWindow)
+	require.Equal(t, 0.95, c.Defaults.AgentFuzzyThreshold)
+	require.Equal(t, 10_000, c.Defaults.EmbedderCacheSize)
+
+	// Intervals
+	require.Equal(t, 5*time.Second, c.WatcherInterval)
+	require.Equal(t, 10*time.Second, c.OverrideInterval)
+	require.Equal(t, 10*time.Second, c.Health.ProbeTimeout)
+}
+
+func TestOperationalConfigValidation(t *testing.T) {
+	cases := map[string]string{
+		"negative server max body": `
+server: {max_request_body_bytes: -1}
+providers: [{name: a, type: openai, base_url: "http://a"}]
+routes: [{name: r, targets: [{provider: a, model: m}]}]`,
+		"negative db max conns": `
+database: {max_conns: -5}
+providers: [{name: a, type: openai, base_url: "http://a"}]
+routes: [{name: r, targets: [{provider: a, model: m}]}]`,
+		"negative breaker threshold": `
+breakers: {threshold: -1}
+providers: [{name: a, type: openai, base_url: "http://a"}]
+routes: [{name: r, targets: [{provider: a, model: m}]}]`,
+		"invalid fuzzy threshold": `
+defaults: {agent_fuzzy_threshold: 1.5}
+providers: [{name: a, type: openai, base_url: "http://a"}]
+routes: [{name: r, targets: [{provider: a, model: m}]}]`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(body))
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestEnvOverrides(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://custom:pass@dbhost:5432/customdb")
+	t.Setenv("REDIS_URL", "redis://redishost:6380/2")
+	t.Setenv("CLICKHOUSE_DSN", "clickhouse://chhost:9001/chdb")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otelhost:4318")
+	t.Setenv("PROOFGATE_ADDR", ":18080")
+	t.Setenv("PROOFGATE_ADMIN_ADDR", "0.0.0.0:19090")
+
+	c, err := Parse([]byte(`
+providers: [{name: a, type: openai, base_url: "http://a"}]
+routes: [{name: r, targets: [{provider: a, model: m}]}]
+`))
+	require.NoError(t, err)
+	require.Equal(t, "postgres://custom:pass@dbhost:5432/customdb", c.Database.URL)
+	require.Equal(t, "redis://redishost:6380/2", c.Redis.URL)
+	require.Equal(t, "clickhouse://chhost:9001/chdb", c.Analytics.ClickHouseDSN)
+	require.Equal(t, "http://otelhost:4318", c.Telemetry.OTLPEndpoint)
+	require.Equal(t, ":18080", c.Server.Addr)
+	require.Equal(t, "0.0.0.0:19090", c.Server.AdminAddr)
+}

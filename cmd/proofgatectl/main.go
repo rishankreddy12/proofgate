@@ -15,7 +15,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/proofgate/proofgate/internal/adminauth"
 	"github.com/proofgate/proofgate/internal/auth"
+	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/secrets"
 	"github.com/proofgate/proofgate/internal/store"
 )
@@ -26,35 +28,104 @@ func die(format string, a ...any) {
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		die("usage: proofgatectl <tenant|key|label|provider-key|kek|export> <command> [flags]")
+	gf, cmdArgs := parseGlobalFlags(os.Args[1:])
+	if len(cmdArgs) == 0 {
+		die("usage: proofgatectl [--profile X] [--server URL] [--output json] [--insecure] <command> [flags]")
 	}
-	if os.Args[1] == "kek" && os.Args[2] == "generate" {
-		k, err := secrets.GenerateLocalKEK()
-		if err != nil {
-			die("generate kek: %v", err)
+
+	ctx := context.Background()
+
+	// 1. Standalone/remote commands that do not need direct DB connection
+	switch cmdArgs[0] {
+	case "kek":
+		if len(cmdArgs) > 1 && cmdArgs[1] == "generate" {
+			k, err := secrets.GenerateLocalKEK()
+			if err != nil {
+				die("generate kek: %v", err)
+			}
+			fmt.Println(k)
+			return
 		}
-		fmt.Println(k)
+	case "profile":
+		runProfile(gf, cmdArgs[1:])
+		return
+	case "login":
+		runLogin(ctx, gf, cmdArgs[1:])
+		return
+	case "logout":
+		runLogout(ctx, gf)
+		return
+	case "whoami":
+		runWhoami(ctx, gf)
+		return
+	case "status":
+		runStatus(ctx, gf)
+		return
+	case "health":
+		runHealth(ctx, gf)
+		return
+	case "cache":
+		if len(cmdArgs) > 1 && cmdArgs[1] == "purge" {
+			runCachePurge(ctx, gf, cmdArgs[2:])
+			return
+		}
+	case "user":
+		runUser(ctx, gf, cmdArgs[1:])
+		return
+	case "provider":
+		runProvider(ctx, gf, cmdArgs[1:])
+		return
+	case "config":
+		runConfig(ctx, gf, cmdArgs[1:])
+		return
+	case "session":
+		runSession(ctx, gf, cmdArgs[1:])
+		return
+	case "chat":
+		runChat(ctx, gf, cmdArgs[1:])
+		return
+	case "export":
+		if len(cmdArgs) > 1 && cmdArgs[1] == "config" {
+			runExport(ctx, cmdArgs[1:])
+			return
+		}
+	}
+
+	// 2. Direct database commands (bootstrap-admin, tenant, key, provider-key, export usage, label cache)
+	if cmdArgs[0] == "export" {
+		runExport(ctx, cmdArgs[1:])
 		return
 	}
-	if os.Args[1] == "export" {
-		runExport(context.Background(), os.Args[2:])
-		return
-	}
-	if os.Args[1] == "label" && os.Args[2] == "cache" {
+	if cmdArgs[0] == "label" && len(cmdArgs) > 1 && cmdArgs[1] == "cache" {
 		fs := flag.NewFlagSet("label cache", flag.ExitOnError)
 		route := fs.String("route", "", "route name (empty = all)")
 		limit := fs.Int("limit", 20, "max records to label")
 		chURL := fs.String("ch", "", "clickhouse connection URL")
-		_ = fs.Parse(os.Args[3:])
-		runLabelCache(context.Background(), *route, *limit, *chURL)
+		_ = fs.Parse(cmdArgs[2:])
+		runLabelCache(ctx, *route, *limit, *chURL)
 		return
 	}
+
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		die("DATABASE_URL is required")
+		cfgPath := os.Getenv("PROOFGATE_CONFIG")
+		if cfgPath == "" {
+			if _, err := os.Stat("proofgate.yaml"); err == nil {
+				cfgPath = "proofgate.yaml"
+			} else if _, err := os.Stat("deploy/proofgate.yaml"); err == nil {
+				cfgPath = "deploy/proofgate.yaml"
+			}
+		}
+		if cfgPath != "" {
+			if cfg, err := config.Load(cfgPath); err == nil && cfg.Database.URL != "" {
+				dsn = cfg.Database.URL
+			}
+		}
 	}
-	ctx := context.Background()
+	if dsn == "" {
+		die("DATABASE_URL is required (or database.url configured in proofgate.yaml)")
+	}
+
 	st, err := store.Open(ctx, dsn)
 	if err != nil {
 		die("connect: %v", err)
@@ -63,11 +134,56 @@ func main() {
 	if err := st.Migrate(ctx); err != nil {
 		die("migrate: %v", err)
 	}
-	if os.Args[1] == "provider-key" {
-		providerKey(ctx, st, os.Args[2:])
+
+	if cmdArgs[0] == "bootstrap-admin" {
+		fs := flag.NewFlagSet("bootstrap-admin", flag.ExitOnError)
+		username := fs.String("username", "", "admin username")
+		_ = fs.Parse(cmdArgs[1:])
+		if *username == "" {
+			die("--username is required")
+		}
+
+		count, err := st.AdminUserCount(ctx)
+		if err != nil {
+			die("check admin users: %v", err)
+		}
+		if count > 0 {
+			die("admin users already exist; use the control-plane API to manage users")
+		}
+
+		pw1, err := readPassword("Enter password for initial admin user: ")
+		if err != nil || pw1 == "" {
+			die("password is required")
+		}
+		pw2, err := readPassword("Confirm password: ")
+		if err != nil || pw2 != pw1 {
+			die("passwords do not match")
+		}
+
+		hash, err := adminauth.HashPassword(pw1)
+		if err != nil {
+			die("hash password: %v", err)
+		}
+
+		u, err := st.CreateAdminUser(ctx, *username, hash, "admin")
+		if err != nil {
+			die("create admin user: %v", err)
+		}
+		_ = st.RecordAdminAudit(ctx, *username, "user.bootstrap", *username, nil, "127.0.0.1", "ok")
+		fmt.Fprintf(os.Stderr, "Admin user created: %s (id=%s)\n", u.Username, u.ID)
 		return
 	}
-	fs := flag.NewFlagSet(os.Args[1]+" "+os.Args[2], flag.ExitOnError)
+
+	if cmdArgs[0] == "provider-key" {
+		providerKey(ctx, st, cmdArgs[1:])
+		return
+	}
+
+	if len(cmdArgs) < 2 {
+		die("usage: proofgatectl <tenant|key|label|provider-key|kek|export|bootstrap-admin> <command> [flags]")
+	}
+
+	fs := flag.NewFlagSet(cmdArgs[0]+" "+cmdArgs[1], flag.ExitOnError)
 	name := fs.String("name", "", "tenant or key name")
 	tenant := fs.String("tenant", "", "tenant name")
 	rpm := fs.Int("rpm", 0, "requests per minute (0 = unlimited)")
@@ -83,10 +199,10 @@ func main() {
 	runTokens := fs.Int("run-max-tokens", 0, "max tokens per agent run")
 	requireRunID := fs.Bool("require-run-id", false, "require X-ProofGate-Run-Id header")
 	mcpPolicyPath := fs.String("mcp-policy", "", "path to JSON file with MCP policy")
-	_ = fs.Parse(os.Args[3:])
+	_ = fs.Parse(cmdArgs[2:])
 	policy := store.TenantPolicy{RPM: *rpm, TPM: *tpm, MonthlyBudgetUSD: *budget, Strict: *strict}
 
-	switch os.Args[1] + " " + os.Args[2] {
+	switch cmdArgs[0] + " " + cmdArgs[1] {
 	case "tenant create":
 		t, err := st.CreateTenant(ctx, *name, policy)
 		if err != nil {
@@ -163,6 +279,6 @@ func main() {
 		}
 		fmt.Println("revoked (cached copies expire within 30s)")
 	default:
-		die("unknown command %q", os.Args[1]+" "+os.Args[2])
+		die("unknown command %q", cmdArgs[0]+" "+cmdArgs[1])
 	}
 }

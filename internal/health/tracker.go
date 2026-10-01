@@ -109,6 +109,55 @@ func (t *Tracker) Observe(s Sample) {
 	t.evaluate(s.Target, e)
 }
 
+// Merge blends peer stats from cross-replica gossip into the local tracker's state
+// using a damped alpha (0.1) to avoid sudden oscillations while rapidly spreading
+// upstream degradation awareness across replicas.
+func (t *Tracker) Merge(tg router.Target, peer Stats) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	e := t.get(tg)
+	const gossipAlpha = 0.1
+
+	if peer.TTFTN > 0 {
+		if e.TTFTN == 0 {
+			e.TTFTMs = peer.TTFTMs
+			e.TTFTDevMs = peer.TTFTDevMs
+			e.TTFTN = peer.TTFTN
+		} else {
+			e.TTFTMs = (1-gossipAlpha)*e.TTFTMs + gossipAlpha*peer.TTFTMs
+			e.TTFTDevMs = (1-gossipAlpha)*e.TTFTDevMs + gossipAlpha*peer.TTFTDevMs
+			e.TTFTN += peer.TTFTN
+		}
+	}
+
+	if peer.TPSN > 0 {
+		if e.TPSN == 0 {
+			e.TPS = peer.TPS
+			e.TPSN = peer.TPSN
+		} else {
+			e.TPS = (1-gossipAlpha)*e.TPS + gossipAlpha*peer.TPS
+			e.TPSN += peer.TPSN
+		}
+	}
+
+	if peer.ErrN > 0 {
+		if e.ErrN == 0 {
+			e.ErrRate = peer.ErrRate
+			e.ErrN = peer.ErrN
+		} else {
+			e.ErrRate = (1-gossipAlpha)*e.ErrRate + gossipAlpha*peer.ErrRate
+			e.ErrN += peer.ErrN
+		}
+	}
+
+	if peer.Degraded && !e.Degraded {
+		e.breaches = max(e.breaches, t.cfg.Breaches)
+	}
+
+	t.evaluate(tg, e)
+}
+
 func (t *Tracker) evaluate(tg router.Target, e *entry) {
 	slo, ok := t.slos[tg.String()]
 	if !ok {

@@ -3,6 +3,13 @@ server:
   addr: ":8080"
   admin_addr: "127.0.0.1:9090"
 
+admin_auth:
+  enabled: true
+  max_login_attempts: 5
+  lockout_duration: 15m
+  session_idle_timeout: 30m
+  session_absolute_timeout: 12h
+
 secrets:
   kek: local
   local_kek_file: deploy/secrets/local_kek.b64
@@ -10,26 +17,35 @@ secrets:
 providers:
   - {name: mock-a, type: openai, base_url: "http://localhost:18081/v1", api_key_db: true}
   - {name: mock-b, type: openai, base_url: "http://localhost:18082/v1", api_key_db: true}
-  - {name: openai, type: openai, base_url: "https://api.openai.com/v1", api_key_env: OPENAI_API_KEY}
-  - {name: anthropic, type: anthropic, base_url: "https://api.anthropic.com", api_key_env: ANTHROPIC_API_KEY}
-  - {name: gemini, type: gemini, base_url: "https://generativelanguage.googleapis.com", api_key_env: GEMINI_API_KEY}
+  - {name: openai, type: openai, base_url: "http://127.0.0.1:8317/v1", api_key_db: true}
+  - {name: easycli, type: openai, base_url: "http://127.0.0.1:8317/v1", api_key_db: true}
+  - {name: anthropic, type: anthropic, base_url: "https://api.anthropic.com", api_key_db: true}
+  - {name: gemini, type: gemini, base_url: "https://generativelanguage.googleapis.com", api_key_db: true}
   - {name: ollama, type: openai, base_url: "http://localhost:11434/v1"}
 
 pricing:
   mock-a/mock-small:   {input: 0.10, output: 0.40}
   mock-b/mock-large:   {input: 1.00, output: 4.00}
   mock-a/mock-embed:   {input: 0.02, output: 0}
+  openai/gemini-3-flash: {input: 0.10, output: 0.40}
+  openai/claude-sonnet-4-6: {input: 3.00, output: 15.00}
+  openai/gpt-oss-120b-medium: {input: 0.20, output: 0.80}
+  easycli/gemini-3-flash: {input: 0.10, output: 0.40}
+  easycli/claude-sonnet-4-6: {input: 3.00, output: 15.00}
 
 routes:
   - name: default
     targets:
+      - {provider: openai, model: gemini-3-flash}
       - {provider: mock-a, model: mock-small}
-      - {provider: mock-b, model: mock-large}
     hedge: {enabled: true, max_extra: 0.1}
     cache:
       mode: on
       exact: true
       ttl: 24h
+  - name: claude
+    targets:
+      - {provider: openai, model: claude-sonnet-4-6}
   - name: faq
     targets:
       - {provider: mock-a, model: mock-small}

@@ -47,6 +47,17 @@ func (s *Store) ActiveCredential(ctx context.Context, provider string) (secrets.
 	return out, v, notFound(err)
 }
 
+// ActiveTenantCredential retrieves the active credential for a provider, checking for a tenant-specific
+// override (e.g. "tenantID/provider") before falling back to the global provider credential.
+func (s *Store) ActiveTenantCredential(ctx context.Context, tenantID, provider string) (secrets.Sealed, int, error) {
+	if tenantID != "" {
+		if sealed, v, err := s.ActiveCredential(ctx, tenantID+"/"+provider); err == nil {
+			return sealed, v, nil
+		}
+	}
+	return s.ActiveCredential(ctx, provider)
+}
+
 func (s *Store) ListCredentials(ctx context.Context) ([]CredentialInfo, error) {
 	rows, err := s.pool.Query(ctx, `SELECT provider, version, kek_id, created_at, created_by, active
 		FROM provider_credentials ORDER BY provider, version`)

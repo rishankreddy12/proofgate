@@ -12,26 +12,31 @@ import (
 )
 
 // tags walks a struct type and collects every yaml tag name.
-func tags(t reflect.Type, out map[string]bool) {
+func tags(t reflect.Type, out map[string]bool, seen map[reflect.Type]bool) {
 	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice || t.Kind() == reflect.Map {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
 		return
 	}
+	if seen[t] {
+		return
+	}
+	seen[t] = true
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
 		if name != "" && name != "-" {
 			out[name] = true
 		}
-		tags(f.Type, out)
+		tags(f.Type, out, seen)
 	}
 }
 
 func TestEveryConfigFieldIsDocumented(t *testing.T) {
 	names := map[string]bool{}
-	tags(reflect.TypeOf(config.Config{}), names)
+	seen := map[reflect.Type]bool{}
+	tags(reflect.TypeOf(config.Config{}), names, seen)
 	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "configuration.md"))
 	require.NoError(t, err)
 	doc := string(b)

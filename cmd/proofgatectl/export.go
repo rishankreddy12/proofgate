@@ -15,41 +15,7 @@ import (
 )
 
 func redactConfig(cfg *config.Config) *config.Config {
-	if cfg == nil {
-		return nil
-	}
-	cp := *cfg
-	if cfg.Providers != nil {
-		cp.Providers = make([]config.ProviderConfig, len(cfg.Providers))
-		for i, p := range cfg.Providers {
-			cp.Providers[i] = p
-			if p.Headers != nil {
-				cp.Providers[i].Headers = make(map[string]string, len(p.Headers))
-				for k, v := range p.Headers {
-					cp.Providers[i].Headers[k] = v
-				}
-			}
-			if p.APIKeyEnv != "" {
-				cp.Providers[i].APIKeyEnv = "<redacted>"
-			}
-		}
-	}
-	if cfg.MCPServers != nil {
-		cp.MCPServers = make([]config.MCPServerConfig, len(cfg.MCPServers))
-		for i, m := range cfg.MCPServers {
-			cp.MCPServers[i] = m
-			if m.Headers != nil {
-				cp.MCPServers[i].Headers = make(map[string]string, len(m.Headers))
-				for k := range m.Headers {
-					cp.MCPServers[i].Headers[k] = "<redacted>"
-				}
-			}
-		}
-	}
-	if cfg.Secrets.LocalKEKFile != "" {
-		cp.Secrets.LocalKEKFile = "<redacted>"
-	}
-	return &cp
+	return config.Redact(cfg)
 }
 
 type ExportUsageRow struct {
@@ -88,6 +54,24 @@ func runExport(ctx context.Context, args []string) {
 		chURL := fs.String("ch", os.Getenv("CLICKHOUSE_DSN"), "ClickHouse DSN")
 		_ = fs.Parse(args[1:])
 
+		if *chURL == "" {
+			*chURL = os.Getenv("CLICKHOUSE_URL")
+		}
+		if *chURL == "" {
+			cfgPath := os.Getenv("PROOFGATE_CONFIG")
+			if cfgPath == "" {
+				if _, err := os.Stat("proofgate.yaml"); err == nil {
+					cfgPath = "proofgate.yaml"
+				} else if _, err := os.Stat("deploy/proofgate.yaml"); err == nil {
+					cfgPath = "deploy/proofgate.yaml"
+				}
+			}
+			if cfgPath != "" {
+				if cfg, err := config.Load(cfgPath); err == nil && cfg.Analytics.ClickHouseDSN != "" {
+					*chURL = cfg.Analytics.ClickHouseDSN
+				}
+			}
+		}
 		if *chURL == "" {
 			*chURL = "clickhouse://proofgate:proofgate@127.0.0.1:19000/proofgate"
 		}

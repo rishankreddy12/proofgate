@@ -22,11 +22,20 @@ var tracer = otel.Tracer("github.com/proofgate/proofgate")
 
 // SetupTracing installs an OTLP/HTTP exporter when OTEL_EXPORTER_OTLP_ENDPOINT is set; otherwise tracing is a no-op.
 func SetupTracing(ctx context.Context, service string) (func(context.Context) error, error) {
+	return SetupTracingWithEndpoint(ctx, service, "")
+}
+
+// SetupTracingWithEndpoint installs an OTLP/HTTP exporter when endpoint or OTEL_EXPORTER_OTLP_ENDPOINT is set.
+func SetupTracingWithEndpoint(ctx context.Context, service, endpoint string) (func(context.Context) error, error) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+	if endpoint == "" {
+		endpoint = os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	}
+	if endpoint == "" {
 		return func(context.Context) error { return nil }, nil
 	}
-	exp, err := otlptracehttp.New(ctx)
+	opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(endpoint)}
+	exp, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}

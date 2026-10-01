@@ -47,16 +47,30 @@ type Route struct {
 }
 
 type Router struct {
-	routes    map[string]*Route
-	order     []*Route
-	providers map[string]bool
-	pricing   map[string]config.Price
-	breakers  *Breakers
-	degraded  func(Target) bool
+	routes       map[string]*Route
+	order        []*Route
+	providers    map[string]bool
+	pricing      map[string]config.Price
+	capabilities map[string]Capability
+	breakers     *Breakers
+	degraded     func(Target) bool
 }
 
 func New(cfg *config.Config, br *Breakers) *Router {
-	r := &Router{routes: map[string]*Route{}, providers: map[string]bool{}, pricing: cfg.Pricing, breakers: br}
+	r := &Router{
+		routes:       map[string]*Route{},
+		providers:    map[string]bool{},
+		pricing:      cfg.Pricing,
+		capabilities: map[string]Capability{},
+		breakers:     br,
+	}
+	for k, cap := range cfg.Capabilities {
+		r.capabilities[k] = Capability{
+			MaxContextTokens: cap.MaxContextTokens,
+			SupportsVision:   cap.SupportsVision,
+			SupportsTools:    cap.SupportsTools,
+		}
+	}
 	for _, p := range cfg.Providers {
 		r.providers[p.Name] = true
 	}
@@ -104,6 +118,11 @@ func (r *Router) blendedPrice(t Target) float64 {
 // SetHealth lets the planner push degraded targets behind healthy ones.
 func (r *Router) SetHealth(degraded func(Target) bool) { r.degraded = degraded }
 
+// SetCapabilities configures target capability definitions for dynamic routing.
+func (r *Router) SetCapabilities(caps map[string]Capability) {
+	r.capabilities = caps
+}
+
 // Order orders targets: healthy -> slow (degraded) -> open (breaker tripped).
 func (r *Router) Order(plan []Target) []Target {
 	var healthy, slow, open []Target
@@ -120,9 +139,32 @@ func (r *Router) Order(plan []Target) []Target {
 	return append(append(healthy, slow...), open...)
 }
 
-// Plan orders targets by strategy, then moves degraded targets and open breakers to the end.
-func (r *Router) Plan(rt *Route) []Target {
-	plan := append([]Target(nil), rt.Targets...)
+// Plan orders targets by strategy, filtering out any targets incompatible with the optional request capabilities,
+// then moves degraded targets and open breakers to the end.
+func (r *Router) Plan(rt *Route, req ...*api.ChatRequest) []Target {
+	var request *api.ChatRequest
+	if len(req) > 0 {
+		request = req[0]
+	}
+
+	var plan []Target
+	for _, t := range rt.Targets {
+		if request != nil && len(r.capabilities) > 0 {
+			if cap, ok := r.capabilities[t.String()]; ok {
+				if !Compatible(request, cap) {
+					continue
+				}
+			}
+		}
+		plan = append(plan, t)
+	}
+
+	// If all targets were filtered out by strict capability checks, fall back to unfiltered
+	// targets so the request still attempts execution.
+	if len(plan) == 0 {
+		plan = append([]Target(nil), rt.Targets...)
+	}
+
 	if rt.Strategy == "cheapest" {
 		sort.SliceStable(plan, func(i, j int) bool { return r.blendedPrice(plan[i]) < r.blendedPrice(plan[j]) })
 	}

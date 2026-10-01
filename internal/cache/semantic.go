@@ -18,19 +18,22 @@ import (
 type Semantic struct {
 	rdb     *redis.Client
 	mu      sync.Mutex
-	indexes map[int]bool
+	indexes sync.Map
 }
 
 // NewSemantic needs a client created with Protocol: 2 (go-redis search replies are parsed as RESP2).
-func NewSemantic(rdb *redis.Client) *Semantic { return &Semantic{rdb: rdb, indexes: map[int]bool{}} }
+func NewSemantic(rdb *redis.Client) *Semantic { return &Semantic{rdb: rdb} }
 
 func indexName(dim int) string { return "idx:sc:" + strconv.Itoa(dim) }
 func prefix(dim int) string    { return "sc:" + strconv.Itoa(dim) + ":" }
 
 func (s *Semantic) ensureIndex(ctx context.Context, dim int) error {
+	if _, ok := s.indexes.Load(dim); ok {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.indexes[dim] {
+	if _, ok := s.indexes.Load(dim); ok {
 		return nil
 	}
 	// Equivalent raw command:
@@ -49,7 +52,7 @@ func (s *Semantic) ensureIndex(ctx context.Context, dim int) error {
 	if err != nil && !strings.Contains(err.Error(), "Index already exists") {
 		return err
 	}
-	s.indexes[dim] = true
+	s.indexes.Store(dim, true)
 	return nil
 }
 
