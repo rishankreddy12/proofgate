@@ -182,3 +182,42 @@ func (r *ChatRequest) Clone() *ChatRequest {
 	}
 	return &c
 }
+
+// Clone returns a deep copy of the message.
+func (m Message) Clone() Message {
+	cp := m
+	cp.Content = m.Content.Clone()
+	if m.ToolCalls != nil {
+		cp.ToolCalls = make([]ToolCall, len(m.ToolCalls))
+		for i, tc := range m.ToolCalls {
+			cp.ToolCalls[i] = tc
+			if tc.Index != nil {
+				idx := *tc.Index
+				cp.ToolCalls[i].Index = &idx
+			}
+		}
+	}
+	return cp
+}
+
+// Clone returns a deep copy of the ChatResponse.
+func (r *ChatResponse) Clone() *ChatResponse {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	cp.Choices = make([]Choice, len(r.Choices))
+	for i, ch := range r.Choices {
+		cp.Choices[i] = ch
+		cp.Choices[i].Message = ch.Message.Clone()
+	}
+	if r.Usage != nil {
+		u := *r.Usage
+		if r.Usage.PromptTokensDetails != nil {
+			ptd := *r.Usage.PromptTokensDetails
+			u.PromptTokensDetails = &ptd
+		}
+		cp.Usage = &u
+	}
+	return &cp
+}

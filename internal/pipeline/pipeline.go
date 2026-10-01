@@ -20,8 +20,9 @@ type Call struct {
 	Request      *api.ChatRequest
 	Route        *router.Route
 	Stream       bool
-	Response     *api.ChatResponse // set by the upstream call or by a short-circuiting stage
-	Target       router.Target
+	Response       *api.ChatResponse // set by the upstream call or by a short-circuiting stage
+	ClientResponse *api.ChatResponse // client view (e.g. with PII restored); if set, written to client
+	Target         router.Target
 	Attempts     int
 	Usage        api.Usage
 	CostMicros   int64
@@ -46,6 +47,12 @@ type Stage interface {
 	Name() string
 	Before(ctx context.Context, c *Call) (handled bool, err error)
 	After(ctx context.Context, c *Call)
+}
+
+// Responder is an optional interface implemented by stages that transform
+// the canonical response into a client view (e.g. restoring PII) before writing.
+type Responder interface {
+	Respond(ctx context.Context, c *Call)
 }
 
 type Pipeline struct {
@@ -75,6 +82,17 @@ func (p *Pipeline) Before(ctx context.Context, c *Call) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func (p *Pipeline) Respond(ctx context.Context, c *Call) {
+	if p == nil {
+		return
+	}
+	for i := len(p.stages) - 1; i >= 0; i-- {
+		if r, ok := p.stages[i].(Responder); ok {
+			r.Respond(ctx, c)
+		}
+	}
 }
 
 func (p *Pipeline) After(ctx context.Context, c *Call) {

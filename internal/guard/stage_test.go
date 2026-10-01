@@ -47,10 +47,94 @@ func TestGuardStage_PII_UnaryFlow(t *testing.T) {
 		},
 	}
 
-	stg.After(ctx, call)
+	stg.Respond(ctx, call)
 
-	// Asserts caller gets back original restored PII
-	require.Equal(t, "Acknowledged, I will email alice@example.com.", call.Response.Choices[0].Message.Content.PlainText())
+	// Canonical response keeps placeholder for caching/storage purity
+	require.Equal(t, "Acknowledged, I will email <EMAIL_1>.", call.Response.Choices[0].Message.Content.PlainText())
+	// Client view gets restored PII
+	require.NotNil(t, call.ClientResponse)
+	require.Equal(t, "Acknowledged, I will email alice@example.com.", call.ClientResponse.Choices[0].Message.Content.PlainText())
+}
+
+func TestGuardStage_PII_MultiMessageDistinctPlaceholders(t *testing.T) {
+	stg := NewStage()
+	ctx := context.Background()
+
+	rt := &router.Route{
+		Name: "chat",
+		Guard: config.GuardConfig{
+			PII: config.PIIGuardConfig{Enabled: true, Mode: "redact"},
+		},
+	}
+
+	req := &api.ChatRequest{
+		Model: "chat",
+		Messages: []api.Message{
+			{Role: "user", Content: api.Content{Text: "Alice is alice@example.com"}},
+			{Role: "assistant", Content: api.Content{Text: "Got it"}},
+			{Role: "user", Content: api.Content{Text: "Bob is bob@example.com"}},
+		},
+	}
+
+	call := pipeline.NewCall(auth.Principal{TenantID: "t1"}, req, rt)
+	handled, err := stg.Before(ctx, call)
+	require.NoError(t, err)
+	require.False(t, handled)
+
+	// Message 1 gets <EMAIL_1>, Message 3 gets <EMAIL_2> (no collision)
+	require.Equal(t, "Alice is <EMAIL_1>", call.Request.Messages[0].Content.PlainText())
+	require.Equal(t, "Bob is <EMAIL_2>", call.Request.Messages[2].Content.PlainText())
+	require.Equal(t, "2", call.Header.Get("X-ProofGate-PII-Redacted"))
+
+	// Simulate upstream responding with both placeholders
+	call.Response = &api.ChatResponse{
+		Choices: []api.Choice{
+			{Message: api.Message{Role: "assistant", Content: api.Content{Text: "Noted: <EMAIL_1> and <EMAIL_2>."}}},
+		},
+	}
+
+	stg.Respond(ctx, call)
+	require.NotNil(t, call.ClientResponse)
+	require.Equal(t, "Noted: alice@example.com and bob@example.com.", call.ClientResponse.Choices[0].Message.Content.PlainText())
+}
+
+func TestGuardStage_PII_PreservesMultimodalParts(t *testing.T) {
+	stg := NewStage()
+	ctx := context.Background()
+
+	rt := &router.Route{
+		Name: "chat",
+		Guard: config.GuardConfig{
+			PII: config.PIIGuardConfig{Enabled: true, Mode: "redact"},
+		},
+	}
+
+	imgURL := &api.ImageURL{URL: "https://example.com/receipt.png"}
+	req := &api.ChatRequest{
+		Model: "chat",
+		Messages: []api.Message{
+			{
+				Role: "user",
+				Content: api.Content{
+					Parts: []api.ContentPart{
+						{Type: "text", Text: "Send invoice to charlie@example.com"},
+						{Type: "image_url", ImageURL: imgURL},
+					},
+				},
+			},
+		},
+	}
+
+	call := pipeline.NewCall(auth.Principal{TenantID: "t1"}, req, rt)
+	handled, err := stg.Before(ctx, call)
+	require.NoError(t, err)
+	require.False(t, handled)
+
+	// Content parts are preserved, text is redacted, image is intact
+	require.Len(t, call.Request.Messages[0].Content.Parts, 2)
+	require.Equal(t, "Send invoice to <EMAIL_1>", call.Request.Messages[0].Content.Parts[0].Text)
+	require.Equal(t, "image_url", call.Request.Messages[0].Content.Parts[1].Type)
+	require.Equal(t, "https://example.com/receipt.png", call.Request.Messages[0].Content.Parts[1].ImageURL.URL)
 }
 
 func TestGuardStage_Injection_Block(t *testing.T) {

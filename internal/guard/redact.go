@@ -10,14 +10,21 @@ type RedactResult struct {
 	Mapping  map[string]string // placeholder -> original
 }
 
+// Numberer tracks placeholder numbering across calls for continuous indexing.
+type Numberer map[PIIType]int
+
 // Redact replaces PII matches with typed placeholders (or static masks if mode == "mask").
-func Redact(text string, matches []PIIMatch, mode string) RedactResult {
+// An optional Numberer can be passed to maintain continuous placeholder numbering across multiple calls.
+func Redact(text string, matches []PIIMatch, mode string, n ...Numberer) RedactResult {
 	if len(matches) == 0 {
 		return RedactResult{Redacted: text, Mapping: nil}
 	}
 
 	var b strings.Builder
 	counts := make(map[PIIType]int)
+	if len(n) > 0 && n[0] != nil {
+		counts = n[0]
+	}
 	mapping := make(map[string]string)
 	lastIdx := 0
 

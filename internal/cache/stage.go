@@ -239,7 +239,7 @@ func (s *Stage) After(_ context.Context, c *pipeline.Call) {
 		return
 	}
 	cfg := c.Route.Cache
-	e := Entry{SourceRequestID: c.ID, Query: st.Query, Response: c.Response, CostMicros: c.CostMicros, CreatedAt: s.now(), Tags: st.Tags}
+	e := Entry{SourceRequestID: c.ID, Query: st.Query, Response: c.Response.Clone(), CostMicros: c.CostMicros, CreatedAt: s.now(), Tags: st.Tags}
 	if b, err := json.Marshal(e); err != nil || len(b) > cfg.MaxEntryBytes {
 		return
 	}

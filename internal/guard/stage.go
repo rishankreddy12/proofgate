@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -60,19 +61,45 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 		if mode == "" {
 			mode = "redact"
 		}
+		num := make(Numberer)
 		allMapping := make(map[string]string)
 		totalRedacted := 0
 
 		for i := range c.Request.Messages {
-			text := c.Request.Messages[i].Content.PlainText()
-			matches := DetectPII(text)
-			if len(matches) > 0 {
-				res := Redact(text, matches, mode)
-				c.Request.Messages[i].Content = api.Content{Text: res.Redacted}
-				for k, v := range res.Mapping {
-					allMapping[k] = v
+			msg := &c.Request.Messages[i]
+			if msg.Content.Parts != nil {
+				// Preserve multimodal parts: only redact text parts, leaving images intact
+				for pIdx := range msg.Content.Parts {
+					part := &msg.Content.Parts[pIdx]
+					if part.Type == "text" && part.Text != "" {
+						matches := DetectPII(part.Text)
+						if len(matches) > 0 {
+							res := Redact(part.Text, matches, mode, num)
+							part.Text = res.Redacted
+							for k, v := range res.Mapping {
+								if existing, ok := allMapping[k]; ok && existing != v {
+									slog.Warn("PII mapping collision detected", "placeholder", k, "existing", existing, "new", v)
+								}
+								allMapping[k] = v
+							}
+							totalRedacted += len(matches)
+						}
+					}
 				}
-				totalRedacted += len(matches)
+			} else {
+				text := msg.Content.Text
+				matches := DetectPII(text)
+				if len(matches) > 0 {
+					res := Redact(text, matches, mode, num)
+					msg.Content = api.Content{Text: res.Redacted}
+					for k, v := range res.Mapping {
+						if existing, ok := allMapping[k]; ok && existing != v {
+							slog.Warn("PII mapping collision detected", "placeholder", k, "existing", existing, "new", v)
+						}
+						allMapping[k] = v
+					}
+					totalRedacted += len(matches)
+				}
 			}
 		}
 
@@ -104,14 +131,23 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	return false, nil
 }
 
-func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
+// Respond builds the client view with restored PII before writing to the client.
+// Canonical c.Response (holding placeholders) remains pure for caching and analytics.
+func (s *Stage) Respond(ctx context.Context, c *pipeline.Call) {
 	mapping, ok := c.Values[PIIMappingKey].(map[string]string)
-	if !ok || len(mapping) == 0 || c.Response == nil {
+	if !ok || len(mapping) == 0 || c.Response == nil || c.Stream {
 		return
 	}
 
-	for i := range c.Response.Choices {
-		text := c.Response.Choices[i].Message.Content.PlainText()
-		c.Response.Choices[i].Message.Content = api.Content{Text: Restore(text, mapping)}
+	cr := c.Response.Clone()
+	for i := range cr.Choices {
+		text := cr.Choices[i].Message.Content.PlainText()
+		cr.Choices[i].Message.Content = api.Content{Text: Restore(text, mapping)}
 	}
+	c.ClientResponse = cr
+}
+
+func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
+	// In-place restore has moved to Respond (C2/C3) to prevent races with async caching
+	// and ensure non-streaming clients receive the restored view.
 }

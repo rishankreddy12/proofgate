@@ -55,3 +55,48 @@ func TestCloneIsDeep(t *testing.T) {
 	c.Messages[0].Content.Text = "changed"
 	require.Equal(t, "a", r.Messages[0].Content.Text)
 }
+
+func TestChatResponseCloneIsDeep(t *testing.T) {
+	idx := 0
+	orig := &ChatResponse{
+		ID:      "chatcmpl-1",
+		Created: 12345,
+		Choices: []Choice{
+			{
+				Index: 0,
+				Message: Message{
+					Role: "assistant",
+					Content: Content{
+						Parts: []ContentPart{
+							{Type: "text", Text: "original text"},
+							{Type: "image_url", ImageURL: &ImageURL{URL: "https://example.com/img.png"}},
+						},
+					},
+					ToolCalls: []ToolCall{
+						{Index: &idx, ID: "call_1", Function: FunctionCall{Name: "fn", Arguments: "{}"}},
+					},
+				},
+			},
+		},
+		Usage: &Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30, PromptTokensDetails: &PromptTokensDetails{CachedTokens: 5}},
+	}
+
+	clone := orig.Clone()
+	require.Equal(t, orig, clone)
+
+	// Mutate clone
+	clone.Choices[0].Message.Content.Parts[0].Text = "mutated text"
+	clone.Choices[0].Message.Content.Parts[1].ImageURL.URL = "https://mutated.com"
+	*clone.Choices[0].Message.ToolCalls[0].Index = 99
+	clone.Choices[0].Message.ToolCalls[0].Function.Name = "mutated_fn"
+	clone.Usage.TotalTokens = 999
+	clone.Usage.PromptTokensDetails.CachedTokens = 999
+
+	// Ensure orig is untouched
+	require.Equal(t, "original text", orig.Choices[0].Message.Content.Parts[0].Text)
+	require.Equal(t, "https://example.com/img.png", orig.Choices[0].Message.Content.Parts[1].ImageURL.URL)
+	require.Equal(t, 0, *orig.Choices[0].Message.ToolCalls[0].Index)
+	require.Equal(t, "fn", orig.Choices[0].Message.ToolCalls[0].Function.Name)
+	require.Equal(t, 30, orig.Usage.TotalTokens)
+	require.Equal(t, 5, orig.Usage.PromptTokensDetails.CachedTokens)
+}

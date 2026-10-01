@@ -151,8 +151,13 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		api.WriteError(w, err)
 	} else {
+		h.Pipeline.Respond(ctx, c)
+		respToWrite := c.Response
+		if c.ClientResponse != nil {
+			respToWrite = c.ClientResponse
+		}
 		w.Header().Set("X-ProofGate-Cost-USD", usd(c.CostMicros))
-		writeJSON(w, http.StatusOK, c.Response)
+		writeJSON(w, http.StatusOK, respToWrite)
 	}
 	h.Pipeline.After(ctx, c)
 }

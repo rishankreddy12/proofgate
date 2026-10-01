@@ -56,6 +56,22 @@ func (c Content) PlainText() string {
 	return strings.Join(texts, "\n")
 }
 
+// Clone returns a deep copy of Content and any parts.
+func (c Content) Clone() Content {
+	out := c
+	if c.Parts != nil {
+		out.Parts = make([]ContentPart, len(c.Parts))
+		for i, p := range c.Parts {
+			out.Parts[i] = p
+			if p.ImageURL != nil {
+				img := *p.ImageURL
+				out.Parts[i].ImageURL = &img
+			}
+		}
+	}
+	return out
+}
+
 // StringOrSlice accepts "x" or ["x","y"] and always marshals as a list.
 type StringOrSlice []string
 
