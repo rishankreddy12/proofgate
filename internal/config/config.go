@@ -26,11 +26,39 @@ type MCPServerConfig struct {
 type ServerConfig struct {
 	Addr                string        `yaml:"addr"`
 	AdminAddr           string        `yaml:"admin_addr"`
+	MetricsAddr         string        `yaml:"metrics_addr"`
+	EnablePprof         bool          `yaml:"enable_pprof"`
 	MaxRequestBodyBytes int64         `yaml:"max_request_body_bytes"`
 	ReadHeaderTimeout   time.Duration `yaml:"read_header_timeout"`
+	ReadTimeout         time.Duration `yaml:"read_timeout"`
 	IdleTimeout         time.Duration `yaml:"idle_timeout"`
 	DrainTimeout        time.Duration `yaml:"drain_timeout"`
 	TrustedProxies      []string      `yaml:"trusted_proxies"`
+}
+
+// IsLoopbackAddr returns true if the host component of addr is a loopback address
+// (127.0.0.0/8, ::1, or localhost). Binds to all interfaces (e.g. "", ":port", "0.0.0.0", "::")
+// return false.
+func IsLoopbackAddr(addr string) bool {
+	if addr == "" {
+		return false
+	}
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		return true
+	}
+	return false
 }
 
 func (s *ServerConfig) ParsedTrustedProxies() ([]*net.IPNet, error) {
@@ -336,6 +364,12 @@ func (c *Config) applyEnvOverrides() {
 	if env := os.Getenv("PROOFGATE_ADMIN_ADDR"); env != "" {
 		c.Server.AdminAddr = env
 	}
+	if env := os.Getenv("PROOFGATE_METRICS_ADDR"); env != "" {
+		c.Server.MetricsAddr = env
+	}
+	if env := os.Getenv("PROOFGATE_ENABLE_PPROF"); env == "1" || strings.EqualFold(env, "true") {
+		c.Server.EnablePprof = true
+	}
 }
 
 func (c *Config) applyDefaults() {
@@ -345,11 +379,17 @@ func (c *Config) applyDefaults() {
 	if c.Server.AdminAddr == "" {
 		c.Server.AdminAddr = "127.0.0.1:9090"
 	}
+	if c.Server.MetricsAddr == "" {
+		c.Server.MetricsAddr = "127.0.0.1:9091"
+	}
 	if c.Server.MaxRequestBodyBytes == 0 {
 		c.Server.MaxRequestBodyBytes = 10 << 20 // 10MB
 	}
 	if c.Server.ReadHeaderTimeout == 0 {
 		c.Server.ReadHeaderTimeout = 10 * time.Second
+	}
+	if c.Server.ReadTimeout == 0 {
+		c.Server.ReadTimeout = 15 * time.Second
 	}
 	if c.Server.IdleTimeout == 0 {
 		c.Server.IdleTimeout = 120 * time.Second

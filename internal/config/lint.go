@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 )
@@ -96,12 +95,7 @@ func Lint(c *Config, opts ...LintOpts) []LintIssue {
 	// 4. Admin exposure check (C13)
 	adminAddr := c.Server.AdminAddr
 	if adminAddr != "" {
-		host := adminAddr
-		if h, _, err := net.SplitHostPort(adminAddr); err == nil {
-			host = h
-		}
-		isLoopback := host == "127.0.0.1" || host == "localhost" || host == "::1" || host == ""
-		if !isLoopback && !c.AdminAuth.Enabled {
+		if !IsLoopbackAddr(adminAddr) && !c.AdminAuth.Enabled {
 			add("admin/exposure", SeverityError,
 				"server.admin_addr %q is non-loopback but admin_auth.enabled is false. Unauthenticated admin APIs must not be exposed.", adminAddr)
 		}

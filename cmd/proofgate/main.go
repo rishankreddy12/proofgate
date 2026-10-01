@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/pprof"
 	"os"
 	"os/signal"
 	"reflect"
@@ -331,30 +330,65 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		}
 	}
 
-	public := &http.Server{Addr: cfg.Server.Addr, Handler: telemetry.Tracing(telemetry.AccessLog(h.Routes(authMW.Handler))),
-		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout, IdleTimeout: cfg.Server.IdleTimeout}
+	// Refuse unsafe config at startup: non-loopback admin_addr requires admin_auth.enabled
+	if !config.IsLoopbackAddr(cfg.Server.AdminAddr) && !cfg.AdminAuth.Enabled {
+		if os.Getenv("PROOFGATE_ALLOW_UNAUTH_ADMIN") != "1" {
+			return fmt.Errorf("fatal: server.admin_addr %q is non-loopback while admin_auth.enabled is false; enable admin_auth or set PROOFGATE_ALLOW_UNAUTH_ADMIN=1 to override", cfg.Server.AdminAddr)
+		}
+		slog.Warn("SECURITY WARNING: admin_addr is non-loopback while admin_auth.enabled is false; running insecurely due to PROOFGATE_ALLOW_UNAUTH_ADMIN=1", "admin_addr", cfg.Server.AdminAddr)
+	}
+
+	public := &http.Server{
+		Addr:              cfg.Server.Addr,
+		Handler:           telemetry.Tracing(telemetry.AccessLog(h.Routes(authMW.Handler))),
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+	}
 
 	var adminAuthSvc *adminauth.Service
 	if cfg.AdminAuth.Enabled {
 		adminAuthSvc = adminauth.NewService(st, rdb, cfg.AdminAuth, scrubber)
 	}
 
-	admin := http.NewServeMux()
-	admin.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
-	admin.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+	// 1. Metrics listener: isolated to metrics and healthz checks
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+	healthzHandler := func(w http.ResponseWriter, r *http.Request) {
 		if err := st.Ping(r.Context()); err != nil {
-			http.Error(w, "postgres: "+err.Error(), 503)
+			http.Error(w, "postgres: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		if err := rdb.Ping(r.Context()).Err(); err != nil {
-			http.Error(w, "redis: "+err.Error(), 503)
+			http.Error(w, "redis: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-		w.WriteHeader(200)
+		w.WriteHeader(http.StatusOK)
+	}
+	metricsMux.HandleFunc("GET /healthz", healthzHandler)
+	metricsMux.HandleFunc("GET /readyz", healthzHandler)
+
+	metricsSrv := &http.Server{
+		Addr:              cfg.Server.MetricsAddr,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+	}
+
+	// 2. Admin listener: operational and control-plane endpoints
+	admin := http.NewServeMux()
+	admin.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := st.Ping(r.Context()); err != nil {
+			http.Error(w, "postgres: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if err := rdb.Ping(r.Context()).Err(); err != nil {
+			http.Error(w, "redis: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	})
-	admin.HandleFunc("GET /debug/pprof/", pprof.Index)
-	admin.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
-	admin.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
 
 	cpDeps := &server.ControlPlaneDeps{
 		State:        state,
@@ -377,9 +411,16 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		ServerAddr:  cfg.Server.Addr,
 		Config:      cfg,
 		Metrics:     metrics,
+		EnablePprof: cfg.Server.EnablePprof,
 	}
 	server.RegisterAdminRoutes(admin, cpDeps, cfg.AdminAuth.Enabled)
-	adminSrv := &http.Server{Addr: cfg.Server.AdminAddr, Handler: admin, ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout}
+	adminSrv := &http.Server{
+		Addr:              cfg.Server.AdminAddr,
+		Handler:           admin,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+	}
 
 	go func() {
 		t := time.NewTicker(5 * time.Second)
@@ -398,10 +439,11 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		}
 	}()
 
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	go func() { errc <- public.ListenAndServe() }()
 	go func() { errc <- adminSrv.ListenAndServe() }()
-	slog.Info("proofgate started", "version", version.Version, "addr", cfg.Server.Addr, "admin", cfg.Server.AdminAddr)
+	go func() { errc <- metricsSrv.ListenAndServe() }()
+	slog.Info("proofgate started", "version", version.Version, "addr", cfg.Server.Addr, "admin", cfg.Server.AdminAddr, "metrics", cfg.Server.MetricsAddr)
 
 	select {
 	case <-ctx.Done():
@@ -413,6 +455,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	slog.Info("shutting down, draining in-flight requests")
 	sctx, cancel := context.WithTimeout(context.Background(), cfg.Server.DrainTimeout)
 	defer cancel()
+	_ = metricsSrv.Shutdown(sctx)
 	_ = adminSrv.Shutdown(sctx)
 	if err := public.Shutdown(sctx); err != nil {
 		slog.Warn("drain timed out", "err", err)

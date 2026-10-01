@@ -2,10 +2,10 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"strings"
 	"time"
@@ -54,6 +54,7 @@ type ControlPlaneDeps struct {
 	Config         *config.Config
 	TrustedProxies []*net.IPNet
 	Metrics        *telemetry.Metrics
+	EnablePprof    bool
 }
 
 func (deps *ControlPlaneDeps) clientIP(r *http.Request) string {
@@ -300,7 +301,10 @@ func (deps *ControlPlaneDeps) handleSetCredential(w http.ResponseWriter, r *http
 	ip := deps.clientIP(r)
 
 	var req SetCredentialRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.APIKey == "" {
+	if err := decodeJSON(w, r, &req); err != nil {
+		return
+	}
+	if req.APIKey == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "api_key is required"})
 		return
 	}
@@ -425,8 +429,7 @@ func (deps *ControlPlaneDeps) handleCreateUser(w http.ResponseWriter, r *http.Re
 	ip := deps.clientIP(r)
 
 	var req CreateUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "invalid JSON body"})
+	if err := decodeJSON(w, r, &req); err != nil {
 		return
 	}
 
@@ -510,8 +513,7 @@ func (deps *ControlPlaneDeps) handleSetUserEnabled(w http.ResponseWriter, r *htt
 	ip := deps.clientIP(r)
 
 	var req SetUserEnabledRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "invalid JSON body"})
+	if err := decodeJSON(w, r, &req); err != nil {
 		return
 	}
 
@@ -603,7 +605,10 @@ func (deps *ControlPlaneDeps) handleChangePassword(w http.ResponseWriter, r *htt
 	}
 
 	var req ChangePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NewPassword == "" {
+	if err := decodeJSON(w, r, &req); err != nil {
+		return
+	}
+	if req.NewPassword == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "new_password is required"})
 		return
 	}
@@ -744,6 +749,15 @@ func RegisterAdminRoutes(admin *http.ServeMux, deps *ControlPlaneDeps, authEnabl
 
 	// 6. Interactive Chat endpoint
 	admin.Handle("POST /admin/cp/chat", wrapPerm(adminauth.PermChatTest, deps.handleChat))
+
+	// 7. Go runtime profiling (pprof) guarded by PermDebug, admin-only
+	if deps.EnablePprof {
+		admin.Handle("GET /debug/pprof/", wrapPerm(adminauth.PermDebug, pprof.Index))
+		admin.Handle("GET /debug/pprof/cmdline", wrapPerm(adminauth.PermDebug, pprof.Cmdline))
+		admin.Handle("GET /debug/pprof/profile", wrapPerm(adminauth.PermDebug, pprof.Profile))
+		admin.Handle("GET /debug/pprof/symbol", wrapPerm(adminauth.PermDebug, pprof.Symbol))
+		admin.Handle("GET /debug/pprof/trace", wrapPerm(adminauth.PermDebug, pprof.Trace))
+	}
 }
 
 func (deps *ControlPlaneDeps) handleChat(w http.ResponseWriter, r *http.Request) {

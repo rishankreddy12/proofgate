@@ -25,6 +25,8 @@ spec:
     - ports:
         - protocol: TCP
           port: 9090
+        - protocol: TCP
+          port: 9091
   egress:
     - ports:
         - protocol: UDP

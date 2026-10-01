@@ -4,5 +4,5 @@ COPY deploy/bin/proofgate /usr/local/bin/proofgate
 COPY deploy/bin/proofgatectl /usr/local/bin/proofgatectl
 COPY deploy/proofgate.yaml /etc/proofgate/proofgate.yaml
 USER nonroot:nonroot
-EXPOSE 8080 9090
+EXPOSE 8080 9090 9091
 ENTRYPOINT ["/usr/local/bin/proofgate"]

@@ -15,5 +15,5 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 COPY --from=build --chmod=0755 /out/ /usr/local/bin/
 COPY deploy/proofgate.yaml /etc/proofgate/proofgate.yaml
 USER nonroot:nonroot
-EXPOSE 8080 9090
+EXPOSE 8080 9090 9091
 ENTRYPOINT ["/usr/local/bin/proofgate"]

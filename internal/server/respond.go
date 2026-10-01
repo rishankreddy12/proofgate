@@ -70,3 +70,29 @@ func upstreamError(err error) error {
 	}
 	return api.Upstream("all targets failed")
 }
+
+// decodeJSON decodes a JSON request body into dst, strictly limiting the body to 64KB
+// and disallowing unknown fields. If the body exceeds 64KB, it writes an HTTP 413
+// Payload Too Large error response. If decoding fails for other reasons, it writes
+// an HTTP 400 Bad Request error response.
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+				"error":   "payload_too_large",
+				"message": "request body exceeds 64KB limit",
+			})
+			return err
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":   "bad_request",
+			"message": "invalid request body",
+		})
+		return err
+	}
+	return nil
+}

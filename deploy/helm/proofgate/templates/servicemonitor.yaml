@@ -10,7 +10,7 @@ spec:
     matchLabels:
       {{- include "proofgate.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: admin
+    - port: metrics
       path: /metrics
       interval: {{ .Values.serviceMonitor.interval }}
 {{- end }}

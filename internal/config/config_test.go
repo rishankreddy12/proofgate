@@ -169,6 +169,8 @@ func TestEnvOverrides(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otelhost:4318")
 	t.Setenv("PROOFGATE_ADDR", ":18080")
 	t.Setenv("PROOFGATE_ADMIN_ADDR", "0.0.0.0:19090")
+	t.Setenv("PROOFGATE_METRICS_ADDR", "127.0.0.1:19091")
+	t.Setenv("PROOFGATE_ENABLE_PPROF", "true")
 
 	c, err := Parse([]byte(`
 providers: [{name: a, type: openai, base_url: "http://a"}]
@@ -181,4 +183,34 @@ routes: [{name: r, targets: [{provider: a, model: m}]}]
 	require.Equal(t, "http://otelhost:4318", c.Telemetry.OTLPEndpoint)
 	require.Equal(t, ":18080", c.Server.Addr)
 	require.Equal(t, "0.0.0.0:19090", c.Server.AdminAddr)
+	require.Equal(t, "127.0.0.1:19091", c.Server.MetricsAddr)
+	require.True(t, c.Server.EnablePprof)
+}
+
+func TestIsLoopbackAddr(t *testing.T) {
+	loopbacks := []string{
+		"127.0.0.1:9090",
+		"127.0.0.2:8080",
+		"localhost:9090",
+		"[::1]:9090",
+		"127.0.0.1",
+		"localhost",
+		"::1",
+	}
+	for _, a := range loopbacks {
+		require.True(t, IsLoopbackAddr(a), "expected %q to be loopback", a)
+	}
+
+	nonLoopbacks := []string{
+		"0.0.0.0:9090",
+		":9090",
+		"[::]:9090",
+		"192.168.1.1:9090",
+		"example.com:9090",
+		"0.0.0.0",
+		"",
+	}
+	for _, a := range nonLoopbacks {
+		require.False(t, IsLoopbackAddr(a), "expected %q to NOT be loopback", a)
+	}
 }

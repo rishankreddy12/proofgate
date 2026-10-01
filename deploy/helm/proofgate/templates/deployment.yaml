@@ -45,6 +45,9 @@ spec:
             - name: admin
               containerPort: 9090
               protocol: TCP
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
@@ -35,11 +34,7 @@ type WhoamiResponse struct {
 
 func (deps *ControlPlaneDeps) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":   "bad_request",
-			"message": "invalid JSON body",
-		})
+	if err := decodeJSON(w, r, &req); err != nil {
 		return
 	}
 

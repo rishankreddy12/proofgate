@@ -39,9 +39,12 @@ Controls bind addresses for client traffic and management APIs.
 | :--- | :--- | :--- | :--- |
 | `server` | object | - | Root configuration for server listeners. |
 | `addr` | string | `":8080"` | Listen address for public OpenAI-compatible data plane APIs (overridable via `PROOFGATE_ADDR`). |
-| `admin_addr` | string | `"127.0.0.1:9090"` | Listen address for private management, reload, metrics, and readiness checks (overridable via `PROOFGATE_ADMIN_ADDR`). **Never expose to the public internet.** |
+| `admin_addr` | string | `"127.0.0.1:9090"` | Listen address for private management, reload, control-plane APIs, and readiness checks (overridable via `PROOFGATE_ADMIN_ADDR`). **Never expose to the public internet.** |
+| `metrics_addr` | string | `"127.0.0.1:9091"` | Listen address for isolated `/metrics` and `/healthz` endpoints (overridable via `PROOFGATE_METRICS_ADDR`). |
+| `enable_pprof` | boolean | `false` | Enable Go runtime profiling endpoints under `/debug/pprof/` on the admin listener (requires `admin` role with `debug:pprof` permission). |
 | `max_request_body_bytes` | integer | `10485760` | Maximum allowed request body size in bytes for chat and embeddings (default 10MB). |
 | `read_header_timeout` | duration | `10s` | Maximum time allowed to read HTTP request headers before closing connection. |
+| `read_timeout` | duration | `15s` | Maximum time allowed to read the entire HTTP request including body. |
 | `idle_timeout` | duration | `120s` | Maximum time to keep idle keep-alive HTTP connections open. |
 | `drain_timeout` | duration | `30s` | Graceful shutdown drain timeout for in-flight requests. |
 | `trusted_proxies` | list of strings | `[]` | List of trusted reverse proxy CIDRs or IP addresses for client IP extraction from `X-Forwarded-For`. |
@@ -49,9 +52,12 @@ Controls bind addresses for client traffic and management APIs.
 ```yaml
 server:
   addr: ":8080"
-  admin_addr: "0.0.0.0:9090"
+  admin_addr: "127.0.0.1:9090"
+  metrics_addr: "127.0.0.1:9091"
+  enable_pprof: false
   max_request_body_bytes: 10485760
   read_header_timeout: 10s
+  read_timeout: 15s
   idle_timeout: 120s
   drain_timeout: 30s
   trusted_proxies:

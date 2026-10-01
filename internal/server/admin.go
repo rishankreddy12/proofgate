@@ -13,8 +13,7 @@ func AdminCachePurgeHandler(rdb *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var opts cache.PurgeOptions
 		if r.Body != nil && r.ContentLength != 0 {
-			if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
-				http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+			if err := decodeJSON(w, r, &opts); err != nil {
 				return
 			}
 		}
