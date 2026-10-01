@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/proofgate/proofgate/internal/agentrun"
 	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/api"
@@ -175,3 +177,137 @@ type noopLedger struct{}
 
 func (noopLedger) Spent(_ context.Context, _, _ string) (int64, error) { return 0, nil }
 func (noopLedger) Add(_ context.Context, _, _ string, _ int64) error   { return nil }
+
+// TestSpoofedInternalHeaderCannotBypassRateLimiter tests C1: an external client sending
+// X-ProofGate-Internal: true cannot bypass rate limiting, and causes the spoof detection metric to increment.
+// Meanwhile, trusted internal calls (via ChatInternal) set c.Internal=true and successfully bypass the limiter.
+func TestSpoofedInternalHeaderCannotBypassRateLimiter(t *testing.T) {
+	mockUpstream := mockllm.New("upstream-1", mockllm.Mode{Reply: "ok"})
+	mockSrv := httptest.NewServer(mockUpstream.Handler())
+	t.Cleanup(mockSrv.Close)
+
+	cfgYAML := fmt.Sprintf(`
+providers:
+  - name: mock-prov
+    type: openai
+    base_url: %q
+pricing:
+  mock-prov/gpt-4o: {input: 1, output: 2}
+routes:
+  - name: default
+    retry: {max_attempts: 1, base_delay: 1ms}
+    targets: [{provider: mock-prov, model: gpt-4o}]
+`, mockSrv.URL+"/v1")
+
+	cfg, err := config.Parse([]byte(cfgYAML))
+	require.NoError(t, err)
+
+	br := router.NewBreakers(5, time.Minute, time.Now)
+	rt, err := server.BuildRuntime(cfg, br, os.Getenv, nil)
+	require.NoError(t, err)
+
+	st := &server.State{}
+	st.Store(rt)
+
+	metrics := telemetry.NewMetrics()
+	limiter := &countLimiter{max: 1}
+
+	d := app.Deps{
+		Metrics:        metrics,
+		UsageEmit:      func(_ analytics.UsageEvent) bool { return true },
+		Runs:           noopRunStore{},
+		FuzzyDetector:  nil,
+		DefaultMaxToks: 4096,
+		CacheStage:     cache.NewStage(nil, nil, nil, nil, nil),
+		Limiter:        limiter,
+		MaxTokReserve:  1000,
+		FailOpenInc:    func() {},
+		Ledger:         noopLedger{},
+	}
+
+	pipe := app.BuildPipeline(d)
+
+	h := &server.Handlers{
+		State:    st,
+		Breakers: br,
+		Pipeline: pipe,
+		Limiter:  limiter,
+		Ledger:   d.Ledger,
+		Now:      time.Now,
+		Metrics:  metrics,
+	}
+
+	principal := auth.Principal{
+		TenantID:      "tenant-alpha",
+		TenantName:    "alpha",
+		AllowedRoutes: []string{"default"},
+		Tenant:        store.TenantPolicy{RPM: 1, Strict: true},
+	}
+	fakeAuth := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+		})
+	}
+
+	gw := httptest.NewServer(h.Routes(fakeAuth))
+	t.Cleanup(gw.Close)
+
+	postWithHeader := func(headerVal string) *http.Response {
+		reqBody := api.ChatRequest{
+			Model:    "default",
+			Messages: []api.Message{{Role: "user", Content: api.Content{Text: "test"}}},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+		req, _ := http.NewRequest("POST", gw.URL+"/v1/chat/completions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		if headerVal != "" {
+			req.Header.Set("X-ProofGate-Internal", headerVal)
+		}
+		resp, postErr := http.DefaultClient.Do(req)
+		require.NoError(t, postErr)
+		return resp
+	}
+
+	// 1st request with spoofed internal header: allowed (count = 1 <= max 1)
+	resp1 := postWithHeader("true")
+	defer resp1.Body.Close()
+	require.Equal(t, http.StatusOK, resp1.StatusCode)
+
+	// 2nd request with spoofed internal header: MUST be rate limited (429)!
+	// If the spoof had worked, it would have returned 200.
+	resp2 := postWithHeader("true")
+	defer resp2.Body.Close()
+	require.Equal(t, http.StatusTooManyRequests, resp2.StatusCode)
+	require.Equal(t, "5", resp2.Header.Get("Retry-After"))
+
+	// Check spoof detection metric: must have observed 2 spoof attempts for tenant-alpha
+	spoofCount := testutil.ToFloat64(metrics.SpoofedInternal.WithLabelValues("tenant-alpha"))
+	require.Equal(t, float64(2), spoofCount, "should record both spoofing attempts")
+
+	// Trusted internal call via ChatInternal: MUST bypass rate limiter even when quota exhausted
+	intResp, intErr := h.ChatInternal(context.Background(), "default", &api.ChatRequest{
+		Messages: []api.Message{{Role: "user", Content: api.Content{Text: "internal test"}}},
+	})
+	require.NoError(t, intErr, "ChatInternal must bypass rate limiting")
+	require.NotNil(t, intResp)
+}
+
+type countLimiter struct {
+	mu    sync.Mutex
+	count int
+	max   int
+}
+
+func (l *countLimiter) Take(_ context.Context, _ string, _ store.TenantPolicy, _ int) (ratelimit.Decision, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.count++
+	if l.count > l.max {
+		return ratelimit.Decision{Allowed: false, RetryAfter: 5 * time.Second}, nil
+	}
+	return ratelimit.Decision{Allowed: true}, nil
+}
+
+func (l *countLimiter) Adjust(_ context.Context, _ string, _ store.TenantPolicy, _ int) error {
+	return nil
+}

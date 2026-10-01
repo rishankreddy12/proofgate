@@ -95,6 +95,24 @@ func resolveRoute(rt *Runtime, p auth.Principal, model string, embeddings bool) 
 	return route, nil
 }
 
+var clientHeaders = []string{
+	"X-ProofGate-Cache",
+	"X-ProofGate-Cache-Tags",
+	"X-ProofGate-Cache-Query",
+	"X-ProofGate-Run-Id",
+	"X-ProofGate-Target",
+}
+
+func sanitizeIncoming(h http.Header) http.Header {
+	out := make(http.Header, len(clientHeaders))
+	for _, k := range clientHeaders {
+		if v := h.Values(k); len(v) > 0 {
+			out[http.CanonicalHeaderKey(k)] = v
+		}
+	}
+	return out
+}
+
 func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	rt := h.State.Load()
 	p, _ := auth.FromContext(r.Context())
@@ -109,7 +127,10 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := pipeline.NewCall(p, req, route)
-	c.Incoming = r.Header
+	if r.Header.Get("X-ProofGate-Internal") != "" {
+		h.Metrics.ObserveSpoofedInternal(p.TenantID)
+	}
+	c.Incoming = sanitizeIncoming(r.Header)
 	ctx := r.Context()
 	handled, err := h.Pipeline.Before(ctx, c)
 	if err == nil && req.Stream {

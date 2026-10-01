@@ -32,11 +32,12 @@ func usesTools(r *api.ChatRequest) bool {
 	return false
 }
 
-func Eligibility(req *api.ChatRequest, hdr http.Header, cfg config.CacheConfig) Plan {
+func Eligibility(req *api.ChatRequest, hdr http.Header, cfg config.CacheConfig, internal ...bool) Plan {
 	if cfg.Mode == "" || cfg.Mode == "off" {
 		return Plan{}
 	}
-	if strings.EqualFold(hdr.Get("X-ProofGate-Cache"), "off") || hdr.Get("X-ProofGate-Internal") == "true" {
+	isInternal := len(internal) > 0 && internal[0]
+	if strings.EqualFold(hdr.Get("X-ProofGate-Cache"), "off") || isInternal {
 		return Plan{Bypass: "header"}
 	}
 	if usesTools(req) {

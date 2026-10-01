@@ -37,6 +37,14 @@ func TestEligibility(t *testing.T) {
 	h.Set("X-ProofGate-Cache", "off")
 	require.Equal(t, Plan{Bypass: "header"}, Eligibility(req(user("q")), h, on))
 
+	// Internal call bypasses cache
+	require.Equal(t, Plan{Bypass: "header"}, Eligibility(req(user("q")), http.Header{}, on, true))
+
+	// Spoofed internal header without internal=true does NOT bypass cache
+	spoofedH := http.Header{}
+	spoofedH.Set("X-ProofGate-Internal", "true")
+	require.Equal(t, Plan{Exact: true, Semantic: true}, Eligibility(req(user("q")), spoofedH, on, false))
+
 	require.Equal(t, Plan{}, Eligibility(req(user("q")), http.Header{}, config.CacheConfig{Mode: "off", Exact: true}))
 }
 

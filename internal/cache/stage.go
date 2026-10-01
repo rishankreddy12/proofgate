@@ -124,7 +124,7 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	if hdr == nil {
 		hdr = http.Header{}
 	}
-	plan := Eligibility(c.Request, hdr, cfg)
+	plan := Eligibility(c.Request, hdr, cfg, c.Internal)
 	if plan.Bypass != "" {
 		c.CacheStatus = "bypass"
 		return false, nil

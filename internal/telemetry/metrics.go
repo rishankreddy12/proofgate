@@ -16,19 +16,20 @@ import (
 var latencyBuckets = []float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120}
 
 type Metrics struct {
-	Registry   *prometheus.Registry
-	FailOpen   prometheus.Counter
-	requests   *prometheus.CounterVec
-	duration   *prometheus.HistogramVec
-	overhead   *prometheus.HistogramVec
-	ttft       *prometheus.HistogramVec
-	tokens     *prometheus.CounterVec
-	cost       *prometheus.CounterVec
-	unpriced   *prometheus.CounterVec
-	breaker    *prometheus.GaugeVec
-	embeds     *prometheus.CounterVec
-	embedToks  *prometheus.CounterVec
-	hedges     *prometheus.CounterVec
+	Registry        *prometheus.Registry
+	FailOpen        prometheus.Counter
+	SpoofedInternal *prometheus.CounterVec
+	requests        *prometheus.CounterVec
+	duration        *prometheus.HistogramVec
+	overhead        *prometheus.HistogramVec
+	ttft            *prometheus.HistogramVec
+	tokens          *prometheus.CounterVec
+	cost            *prometheus.CounterVec
+	unpriced        *prometheus.CounterVec
+	breaker         *prometheus.GaugeVec
+	embeds          *prometheus.CounterVec
+	embedToks       *prometheus.CounterVec
+	hedges          *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -36,20 +37,21 @@ func NewMetrics() *Metrics {
 	r.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	f := func(c prometheus.Collector) { r.MustRegister(c) }
 	m := &Metrics{Registry: r,
-		FailOpen: prometheus.NewCounter(prometheus.CounterOpts{Name: "proofgate_ratelimit_fail_open_total", Help: "Requests allowed because Redis was unavailable."}),
-		requests: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_requests_total", Help: "Chat requests."}, []string{"route", "target", "status", "cache", "stream"}),
-		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "proofgate_request_duration_seconds", Help: "End-to-end latency.", Buckets: latencyBuckets}, []string{"route", "stream"}),
-		overhead: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "proofgate_overhead_seconds", Help: "Latency minus time spent waiting on providers.", Buckets: latencyBuckets}, []string{"stream"}),
-		ttft:     prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "proofgate_ttft_seconds", Help: "Time to first token for streams.", Buckets: latencyBuckets}, []string{"route"}),
-		tokens:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_tokens_total", Help: "Tokens by kind."}, []string{"route", "target", "kind"}),
-		cost:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_cost_usd_total", Help: "Spend in USD."}, []string{"route", "target"}),
-		unpriced: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_unpriced_requests_total", Help: "Calls to targets with no price configured."}, []string{"target"}),
-		breaker:  prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "proofgate_breaker_open", Help: "1 open, 0.5 half-open, 0 closed."}, []string{"target"}),
-		embeds:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_embeddings_total", Help: "Embedding requests."}, []string{"route", "target", "status"}),
-		embedToks: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_embedding_tokens_total", Help: "Embedding tokens."}, []string{"route", "target", "status"}),
-		hedges:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_hedges_total", Help: "Hedged requests."}, []string{"route", "outcome"}),
+		FailOpen:        prometheus.NewCounter(prometheus.CounterOpts{Name: "proofgate_ratelimit_fail_open_total", Help: "Requests allowed because Redis was unavailable."}),
+		SpoofedInternal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_spoofed_internal_header_total", Help: "Requests where client supplied untrusted X-ProofGate-Internal header."}, []string{"tenant"}),
+		requests:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_requests_total", Help: "Chat requests."}, []string{"route", "target", "status", "cache", "stream"}),
+		duration:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "proofgate_request_duration_seconds", Help: "End-to-end latency.", Buckets: latencyBuckets}, []string{"route", "stream"}),
+		overhead:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "proofgate_overhead_seconds", Help: "Latency minus time spent waiting on providers.", Buckets: latencyBuckets}, []string{"stream"}),
+		ttft:            prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "proofgate_ttft_seconds", Help: "Time to first token for streams.", Buckets: latencyBuckets}, []string{"route"}),
+		tokens:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_tokens_total", Help: "Tokens by kind."}, []string{"route", "target", "kind"}),
+		cost:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_cost_usd_total", Help: "Spend in USD."}, []string{"route", "target"}),
+		unpriced:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_unpriced_requests_total", Help: "Calls to targets with no price configured."}, []string{"target"}),
+		breaker:         prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "proofgate_breaker_open", Help: "1 open, 0.5 half-open, 0 closed."}, []string{"target"}),
+		embeds:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_embeddings_total", Help: "Embedding requests."}, []string{"route", "target", "status"}),
+		embedToks:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_embedding_tokens_total", Help: "Embedding tokens."}, []string{"route", "target", "status"}),
+		hedges:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "proofgate_hedges_total", Help: "Hedged requests."}, []string{"route", "outcome"}),
 	}
-	for _, c := range []prometheus.Collector{m.FailOpen, m.requests, m.duration, m.overhead, m.ttft, m.tokens, m.cost, m.unpriced, m.breaker, m.embeds, m.embedToks, m.hedges} {
+	for _, c := range []prometheus.Collector{m.FailOpen, m.SpoofedInternal, m.requests, m.duration, m.overhead, m.ttft, m.tokens, m.cost, m.unpriced, m.breaker, m.embeds, m.embedToks, m.hedges} {
 		f(c)
 	}
 	return m
@@ -104,6 +106,16 @@ func (m *Metrics) ObserveHedge(route, outcome string) {
 		return
 	}
 	m.hedges.WithLabelValues(route, outcome).Inc()
+}
+
+func (m *Metrics) ObserveSpoofedInternal(tenant string) {
+	if m == nil || m.SpoofedInternal == nil {
+		return
+	}
+	if tenant == "" {
+		tenant = "unknown"
+	}
+	m.SpoofedInternal.WithLabelValues(tenant).Inc()
 }
 
 type metricsStage struct{ m *Metrics }

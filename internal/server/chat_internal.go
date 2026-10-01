@@ -25,6 +25,7 @@ func (h *Handlers) ChatInternal(ctx context.Context, route string, req *api.Chat
 		AllowDirect: true,
 	}
 	c := pipeline.NewCall(p, req, r)
+	c.Internal = true
 	hdr := make(http.Header)
 	hdr.Set("X-ProofGate-Internal", "true")
 	c.Incoming = hdr

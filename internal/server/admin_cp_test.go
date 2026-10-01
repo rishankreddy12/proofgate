@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -197,4 +198,63 @@ func TestAdminRoutesEnabledAuth(t *testing.T) {
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestAdminLoginLockoutRetryAfterFormat(t *testing.T) {
+	fs := newFakeAdminStore()
+	mem := adminauth.NewMemStore()
+	authCfg := config.AdminAuthConfig{
+		MaxLoginAttempts:   2,
+		LockoutDuration:    15 * time.Minute,
+		SessionIdleTimeout: 30 * time.Minute,
+		SessionAbsTimeout:  12 * time.Hour,
+	}
+	authSvc := adminauth.NewServiceWithStore(fs, mem, authCfg, nil)
+
+	hash, err := adminauth.HashPassword("correctpass")
+	require.NoError(t, err)
+
+	fs.users["admin"] = store.AdminUser{
+		ID:           "u-admin",
+		Username:     "admin",
+		PasswordHash: hash,
+		Role:         "admin",
+		Enabled:      true,
+	}
+
+	mux := http.NewServeMux()
+	deps := &ControlPlaneDeps{
+		AuthService: authSvc,
+		HealthAdmin: func(w http.ResponseWriter, r *http.Request) {},
+		ReloadFunc:  func() error { return nil },
+		PurgeCache:  func(w http.ResponseWriter, r *http.Request) {},
+	}
+	RegisterAdminRoutes(mux, deps, true)
+
+	// Attempt 1: wrong password -> 401
+	body, _ := json.Marshal(LoginRequest{Username: "admin", Password: "wrong"})
+	req := httptest.NewRequest("POST", "/admin/auth/login", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	// Attempt 2: wrong password -> 401 (hits threshold of 2)
+	req = httptest.NewRequest("POST", "/admin/auth/login", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	// Attempt 3: account is now locked -> 429 Too Many Requests with integer Retry-After
+	req = httptest.NewRequest("POST", "/admin/auth/login", bytes.NewReader(body))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+
+	retryAfter := rec.Header().Get("Retry-After")
+	require.NotEmpty(t, retryAfter)
+	// Must be an integer per RFC 9110 (e.g. "900", not "15m0s" or "900ns")
+	secs, parseErr := strconv.Atoi(retryAfter)
+	require.NoError(t, parseErr, "Retry-After must be a valid integer number of seconds, got %q", retryAfter)
+	require.GreaterOrEqual(t, secs, 800)
+	require.LessOrEqual(t, secs, 900)
 }

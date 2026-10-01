@@ -30,6 +30,7 @@ type Call struct {
 	Latency      time.Duration
 	UpstreamTime time.Duration // time spent waiting on providers; Latency-UpstreamTime = gateway overhead
 	Err          error
+	Internal     bool           // true ONLY for internal calls (embeddings, judge, shadow, fuzzy); never client-controlled
 	Header       http.Header    // extra response headers set by stages
 	Incoming     http.Header    // incoming request headers from the client
 	Values       map[string]any // per-stage scratch space, keys prefixed with the stage name

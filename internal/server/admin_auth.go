@@ -3,8 +3,10 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,7 +71,11 @@ func (deps *ControlPlaneDeps) handleLogin(w http.ResponseWriter, r *http.Request
 		if errors.Is(err, adminauth.ErrAccountLocked) {
 			_, ttl, _ := deps.AuthService.CheckLoginLockout(r.Context(), req.Username)
 			if ttl > 0 {
-				w.Header().Set("Retry-After", time.Duration(ttl.Seconds()).String())
+				secs := int(math.Ceil(ttl.Seconds()))
+				if secs < 1 {
+					secs = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(secs))
 			}
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{
 				"error":   "rate_limited",

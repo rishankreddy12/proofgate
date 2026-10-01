@@ -28,7 +28,7 @@ func NewStage(b Backend, reserve, defaultMax int, onFailOpen func()) *Stage {
 func (s *Stage) Name() string { return "ratelimit" }
 
 func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
-	if c.Incoming != nil && c.Incoming.Get("X-ProofGate-Internal") == "true" {
+	if c.Internal {
 		return false, nil
 	}
 	p := c.Principal.Tenant

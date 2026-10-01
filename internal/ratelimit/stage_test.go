@@ -95,3 +95,24 @@ func TestUnlimitedTenantSkipsBackend(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, b.taken)
 }
+
+func TestStageInternalBypassAndSpoofProtection(t *testing.T) {
+	b := &fakeBackend{decision: Decision{Allowed: true}}
+	s := NewStage(b, 4096, 1024, nil)
+
+	// 1. Client sends spoofed header, but c.Internal is false -> limiter MUST be called.
+	cSpoofed := call(false, 10)
+	cSpoofed.Incoming = map[string][]string{"X-ProofGate-Internal": {"true"}}
+	cSpoofed.Internal = false
+	_, err := s.Before(context.Background(), cSpoofed)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, b.taken, "spoofed header must NOT bypass rate limiter")
+
+	// 2. Gateway sets c.Internal = true -> limiter is bypassed.
+	b.taken = 0
+	cInternal := call(false, 10)
+	cInternal.Internal = true
+	_, err = s.Before(context.Background(), cInternal)
+	require.NoError(t, err)
+	require.Equal(t, 0, b.taken, "internal call must bypass rate limiter")
+}
