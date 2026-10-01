@@ -369,6 +369,9 @@ Configured per route under `routes[].cache`.
 | `per_user` | boolean | `false` | Partition cache keys by client user identifier (`user` field). |
 | `max_entry_bytes` | integer | `262144` | Maximum payload size in bytes cached in Redis (default 256KB). |
 | `acknowledge_uncalibrated` | boolean | `false` | When `true`, allows `cache.mode: on` without verified calibration overrides. |
+| `allow_client_key` | boolean | `false` | When `true`, permits client to supply query text via `X-ProofGate-Cache-Query` header with context isolation. |
+
+> **Context Isolation:** When `allow_client_key` is enabled, ProofGate stores a SHA-256 hash of all preceding context messages (`ContextHash`) and enforces context equality on semantic hits, preventing cross-tenant or cross-document data leakage in RAG workloads. Multi-user applications sharing an API key should also enable `per_user: true` so that user contexts and scopes are isolated.
 
 ---
 

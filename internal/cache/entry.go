@@ -14,6 +14,7 @@ type Entry struct {
 	CostMicros      int64             `json:"cost_micros"`
 	CreatedAt       time.Time         `json:"created_at"`
 	Tags            []string          `json:"tags,omitempty"`
+	ContextHash     string            `json:"context_hash,omitempty"`
 }
 
 type Match struct {

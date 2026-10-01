@@ -306,3 +306,67 @@ func TestCacheStage_ShadowMode(t *testing.T) {
 	require.Equal(t, 1.0, rExact.Similarity)
 }
 
+func TestRAGContextIsolation(t *testing.T) {
+	x, sem := &memExact{m: map[string]Entry{}}, &memSem{}
+	s := NewStage(x, sem, hashEmb, nil, nil)
+	ctx := context.Background()
+
+	ragRoute := semOn
+	ragRoute.AllowClientKey = true
+	rt := route(ragRoute)
+
+	// User 1 asks about refund with Document A in system message
+	req1 := &api.ChatRequest{
+		Model: "faq",
+		Messages: []api.Message{
+			{Role: "system", Content: api.Content{Text: "Contract A: 14 days refund policy."}},
+			{Role: "user", Content: api.Content{Text: "massive doc context... What is the refund policy?"}},
+		},
+	}
+	c1 := pipeline.NewCall(auth.Principal{TenantID: "t1"}, req1, rt)
+	c1.Incoming = http.Header{}
+	c1.Incoming.Set("X-ProofGate-Cache-Query", "What is the refund policy?")
+
+	handled, err := s.Before(ctx, c1)
+	require.NoError(t, err)
+	require.False(t, handled)
+	answer(c1, "14 days per Contract A", "stop")
+	s.After(ctx, c1)
+	s.Wait()
+
+	// User 2 asks the EXACT same query text via header, but has Document B in system message
+	req2 := &api.ChatRequest{
+		Model: "faq",
+		Messages: []api.Message{
+			{Role: "system", Content: api.Content{Text: "Contract B: 30 days refund policy."}},
+			{Role: "user", Content: api.Content{Text: "different doc context... What is the refund policy?"}},
+		},
+	}
+	c2 := pipeline.NewCall(auth.Principal{TenantID: "t1"}, req2, rt)
+	c2.Incoming = http.Header{}
+	c2.Incoming.Set("X-ProofGate-Cache-Query", "What is the refund policy?")
+
+	handled, err = s.Before(ctx, c2)
+	require.NoError(t, err)
+	require.False(t, handled, "different RAG context must NOT cross-hit even with identical X-ProofGate-Cache-Query")
+	require.Equal(t, "miss", c2.CacheStatus)
+
+	// User 3 asks with identical Contract A context
+	req3 := &api.ChatRequest{
+		Model: "faq",
+		Messages: []api.Message{
+			{Role: "system", Content: api.Content{Text: "Contract A: 14 days refund policy."}},
+			{Role: "user", Content: api.Content{Text: "different prompt wrapper... What is the refund policy?"}},
+		},
+	}
+	c3 := pipeline.NewCall(auth.Principal{TenantID: "t1"}, req3, rt)
+	c3.Incoming = http.Header{}
+	c3.Incoming.Set("X-ProofGate-Cache-Query", "What is the refund policy?")
+
+	handled, err = s.Before(ctx, c3)
+	require.NoError(t, err)
+	require.True(t, handled, "identical RAG context must hit")
+	require.Equal(t, "hit-semantic", c3.CacheStatus)
+	require.Equal(t, "14 days per Contract A", c3.Response.Choices[0].Message.Content.Text)
+}
+

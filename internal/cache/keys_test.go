@@ -3,6 +3,7 @@ package cache
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/proofgate/proofgate/internal/api"
@@ -72,6 +73,71 @@ func TestScopeSeparatesWhatMatters(t *testing.T) {
 	require.NotEqual(t, Scope("t", "r", u1, pu), Scope("t", "r", u2, pu))
 }
 
+func TestChatRequestFieldsClassified(t *testing.T) {
+	reqType := reflect.TypeOf(api.ChatRequest{})
+	require.Equal(t, 21, reqType.NumField(), "expected ChatRequest to have 21 fields; if new fields are added, classify them")
+	for i := 0; i < reqType.NumField(); i++ {
+		field := reqType.Field(i).Name
+		_, inc := ScopeIncludedFields[field]
+		_, exc := ScopeExcludedFields[field]
+		require.True(t, inc != exc, "field %q must be in either ScopeIncludedFields or ScopeExcludedFields (not both)", field)
+	}
+}
+
+func TestScopeIncludesOutputAffectingFields(t *testing.T) {
+	base := req(sys("be brief"), user("q"))
+	baseScope := Scope("t1", "default", base, on)
+
+	// ReasoningEffort
+	withEffort := req(sys("be brief"), user("q"))
+	withEffort.ReasoningEffort = "high"
+	require.NotEqual(t, baseScope, Scope("t1", "default", withEffort, on))
+
+	// Model
+	diffModel := req(sys("be brief"), user("q"))
+	diffModel.Model = "other-model"
+	require.NotEqual(t, baseScope, Scope("t1", "default", diffModel, on))
+
+	// PresencePenalty
+	withPres := req(sys("be brief"), user("q"))
+	pres := 0.5
+	withPres.PresencePenalty = &pres
+	require.NotEqual(t, baseScope, Scope("t1", "default", withPres, on))
+
+	// FrequencyPenalty
+	withFreq := req(sys("be brief"), user("q"))
+	freq := 0.5
+	withFreq.FrequencyPenalty = &freq
+	require.NotEqual(t, baseScope, Scope("t1", "default", withFreq, on))
+
+	// ParallelToolCalls
+	withParallel := req(sys("be brief"), user("q"))
+	parallel := false
+	withParallel.ParallelToolCalls = &parallel
+	require.NotEqual(t, baseScope, Scope("t1", "default", withParallel, on))
+
+	// N
+	withN := req(sys("be brief"), user("q"))
+	n := 2
+	withN.N = &n
+	require.NotEqual(t, baseScope, Scope("t1", "default", withN, on))
+
+	// Logprobs
+	withLogprobs := req(sys("be brief"), user("q"))
+	logp := true
+	withLogprobs.Logprobs = &logp
+	require.NotEqual(t, baseScope, Scope("t1", "default", withLogprobs, on))
+
+	// TopLogprobs
+	withTopLogprobs := req(sys("be brief"), user("q"))
+	topL := 5
+	withTopLogprobs.TopLogprobs = &topL
+	require.NotEqual(t, baseScope, Scope("t1", "default", withTopLogprobs, on))
+
+	// Stability across calls
+	require.Equal(t, baseScope, Scope("t1", "default", base, on))
+}
+
 func TestExactHashAndSemanticText(t *testing.T) {
 	s := Scope("t", "r", req(user("q")), on)
 	require.Equal(t, ExactHash(s, req(user("q"))), ExactHash(s, req(user("q"))))
@@ -81,20 +147,36 @@ func TestExactHashAndSemanticText(t *testing.T) {
 
 func TestSemanticTextFromHeader(t *testing.T) {
 	r := req(sys("context instructions"), user("massive 50-page document context and data..."))
-	
+
 	// Without header: fallback to user message
 	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, nil))
 	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, http.Header{}))
-	
-	// With header: uses X-ProofGate-Cache-Query
+
 	h := http.Header{}
 	h.Set("X-ProofGate-Cache-Query", "What is the refund policy?")
-	require.Equal(t, "What is the refund policy?", SemanticTextFromHeader(r, h))
 
-	// With whitespace header: trims or falls back
+	// When allowClientKey is false: ignores header and falls back
+	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, h, false))
+	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, h))
+
+	// When allowClientKey is true: uses X-ProofGate-Cache-Query
+	require.Equal(t, "What is the refund policy?", SemanticTextFromHeader(r, h, true))
+
+	// With whitespace header when allowed: falls back
 	h2 := http.Header{}
 	h2.Set("X-ProofGate-Cache-Query", "   ")
-	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, h2))
+	require.Equal(t, "massive 50-page document context and data...", SemanticTextFromHeader(r, h2, true))
+}
+
+func TestContextHash(t *testing.T) {
+	// Two requests with different context docs but same question text
+	r1 := req(sys("Doc A: 14 days refund policy"), user("What is the refund policy?"))
+	r2 := req(sys("Doc B: 30 days refund policy"), user("What is the refund policy?"))
+	r3 := req(sys("Doc A: 14 days refund policy"), user("What is the refund policy?"))
+
+	require.NotEmpty(t, ContextHash(r1))
+	require.NotEqual(t, ContextHash(r1), ContextHash(r2), "different context documents must yield different ContextHash")
+	require.Equal(t, ContextHash(r1), ContextHash(r3), "identical context documents must yield identical ContextHash")
 }
 
 func TestParseTags(t *testing.T) {

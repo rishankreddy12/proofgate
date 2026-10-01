@@ -261,6 +261,10 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	})
 
 	authMW := auth.NewMiddlewareWithConfig(st, cfg.Auth.CacheTTL, cfg.Auth.NegativeCacheTTL, cfg.Auth.MaxCachedKeys)
+	authMW.ClientIPFunc = func(r *http.Request) string {
+		trusted, _ := cfg.Server.ParsedTrustedProxies()
+		return server.ClientIP(r, trusted)
+	}
 
 	var (
 		rtMu    sync.Mutex

@@ -178,6 +178,7 @@ type CacheConfig struct {
 	PerUser                 bool          `yaml:"per_user"`
 	MaxEntryBytes           int           `yaml:"max_entry_bytes"`
 	AcknowledgeUncalibrated bool          `yaml:"acknowledge_uncalibrated"`
+	AllowClientKey          bool          `yaml:"allow_client_key"`
 }
 
 type InjectionGuardConfig struct {

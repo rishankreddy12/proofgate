@@ -5,12 +5,17 @@ import (
 	"time"
 )
 
+type TenantCachePolicy struct {
+	AllowClientKey bool `json:"allow_client_key"`
+}
+
 // TenantPolicy limits a tenant. Zero values mean unlimited.
 type TenantPolicy struct {
-	RPM              int     `json:"rpm"`
-	TPM              int     `json:"tpm"`
-	MonthlyBudgetUSD float64 `json:"monthly_budget_usd"`
-	Strict           bool    `json:"strict"` // fail closed when Redis is unavailable
+	RPM              int                `json:"rpm"`
+	TPM              int                `json:"tpm"`
+	MonthlyBudgetUSD float64            `json:"monthly_budget_usd"`
+	Strict           bool               `json:"strict"` // fail closed when Redis is unavailable
+	Cache            *TenantCachePolicy `json:"cache,omitempty"`
 }
 
 func (p TenantPolicy) BudgetMicros() int64 { return int64(math.Round(p.MonthlyBudgetUSD * 1e6)) }

@@ -45,16 +45,16 @@ type ShadowRecord struct {
 	CandidateSource string
 }
 
-// State is what the stage learned in Before. Plan 3's shadow recorder reads it.
 type State struct {
-	Plan      Plan
-	Scope     string
-	ExactKey  string
-	Query     string
-	Embedding []float32
-	Tags      []string
-	Nearest   *Match // best semantic candidate, even when below threshold
-	Candidate *Candidate
+	Plan        Plan
+	Scope       string
+	ExactKey    string
+	Query       string
+	ContextHash string
+	Embedding   []float32
+	Tags        []string
+	Nearest     *Match // best semantic candidate, even when below threshold
+	Candidate   *Candidate
 }
 
 const StateKey = "cache.state"
@@ -133,11 +133,14 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 		return false, nil
 	}
 	tenant := c.Principal.TenantID
+	allowClient := cfg.AllowClientKey || (c.Principal.Tenant.Cache != nil && c.Principal.Tenant.Cache.AllowClientKey)
+	ctxHash := ContextHash(c.Request)
 	st := &State{
-		Plan:  plan,
-		Scope: Scope(tenant, c.Route.Name, c.Request, cfg),
-		Query: SemanticTextFromHeader(c.Request, hdr),
-		Tags:  ParseTags(hdr.Get("X-ProofGate-Cache-Tags")),
+		Plan:        plan,
+		Scope:       Scope(tenant, c.Route.Name, c.Request, cfg),
+		Query:       SemanticTextFromHeader(c.Request, hdr, allowClient),
+		ContextHash: ctxHash,
+		Tags:        ParseTags(hdr.Get("X-ProofGate-Cache-Tags")),
 	}
 	c.Values[StateKey] = st
 
@@ -183,7 +186,9 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 		}
 		st.Nearest = m
 		if m != nil {
-			if cfg.Mode == "shadow" {
+			if allowClient && m.Entry.ContextHash != st.ContextHash {
+				// Context mismatch: client query header enabled, but stored context differs from current context
+			} else if cfg.Mode == "shadow" {
 				if st.Candidate == nil && (m.Similarity >= cfg.Threshold || m.Similarity >= 0.70) {
 					var ans string
 					if m.Entry.Response != nil && len(m.Entry.Response.Choices) > 0 {
@@ -239,7 +244,15 @@ func (s *Stage) After(_ context.Context, c *pipeline.Call) {
 		return
 	}
 	cfg := c.Route.Cache
-	e := Entry{SourceRequestID: c.ID, Query: st.Query, Response: c.Response.Clone(), CostMicros: c.CostMicros, CreatedAt: s.now(), Tags: st.Tags}
+	e := Entry{
+		SourceRequestID: c.ID,
+		Query:           st.Query,
+		Response:        c.Response.Clone(),
+		CostMicros:      c.CostMicros,
+		CreatedAt:       s.now(),
+		Tags:            st.Tags,
+		ContextHash:     st.ContextHash,
+	}
 	if b, err := json.Marshal(e); err != nil || len(b) > cfg.MaxEntryBytes {
 		return
 	}
