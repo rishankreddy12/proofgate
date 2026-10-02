@@ -258,6 +258,8 @@ type HealthConfig struct {
 	ProbeTimeout  time.Duration `yaml:"probe_timeout"`
 	GossipAddr    string        `yaml:"gossip_addr"`
 	GossipPeers   []string      `yaml:"gossip_peers"`
+	ShareMode     string        `yaml:"share_mode"`
+	GossipSecret  string        `yaml:"gossip_secret"`
 }
 
 type CapabilityConfig struct {
@@ -380,6 +382,12 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if env := os.Getenv("PROOFGATE_ENABLE_PPROF"); env == "1" || strings.EqualFold(env, "true") {
 		c.Server.EnablePprof = true
+	}
+	if env := os.Getenv("PROOFGATE_GOSSIP_SECRET"); env != "" {
+		c.Health.GossipSecret = env
+	}
+	if env := os.Getenv("PROOFGATE_HEALTH_SHARE_MODE"); env != "" {
+		c.Health.ShareMode = env
 	}
 }
 
@@ -591,6 +599,15 @@ func (c *Config) applyDefaults() {
 	if c.Health.ProbeInterval == 0 {
 		c.Health.ProbeInterval = 10 * time.Second
 	}
+	if c.Health.ShareMode == "" {
+		if c.Redis.URL != "" || os.Getenv("REDIS_URL") != "" {
+			c.Health.ShareMode = "redis"
+		} else if c.Health.GossipAddr != "" {
+			c.Health.ShareMode = "gossip"
+		} else {
+			c.Health.ShareMode = "none"
+		}
+	}
 	if c.Secrets.KEK == "" {
 		c.Secrets.KEK = "local"
 	}
@@ -720,6 +737,9 @@ func (c *Config) validate() error {
 	}
 	if c.Health.Alpha < 0 || c.Health.Alpha > 1.0 {
 		errs = append(errs, errors.New("health.alpha must be in [0, 1]"))
+	}
+	if c.Health.ShareMode != "" && c.Health.ShareMode != "none" && c.Health.ShareMode != "redis" && c.Health.ShareMode != "gossip" {
+		errs = append(errs, fmt.Errorf("health.share_mode must be one of: none, redis, gossip (got %q)", c.Health.ShareMode))
 	}
 	for key := range c.SLOs {
 		p, m, ok := strings.Cut(key, "/")

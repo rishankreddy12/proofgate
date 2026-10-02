@@ -1,6 +1,7 @@
 package health
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -67,3 +68,45 @@ func TestErrorRateAndNoSLO(t *testing.T) {
 	}
 	require.False(t, tr.Degraded(other), "targets without an SLO are never degraded by the tracker")
 }
+
+func TestTrackerMergeHardening(t *testing.T) {
+	now := time.Unix(0, 0)
+	tr := newTracker(&now)
+	tr.SetTargets([]router.Target{tgt})
+
+	// 1. Unknown target is dropped
+	unknown := router.Target{Provider: "evil", Model: "miner"}
+	tr.Merge(unknown, Stats{TTFTMs: 100, TTFTN: 10, Degraded: true})
+	require.Equal(t, 0, tr.Stats(unknown).TTFTN, "unknown target should be dropped")
+	require.False(t, tr.Degraded(unknown))
+
+	// 2. NaN and Inf are rejected
+	tr.Merge(tgt, Stats{TTFTMs: math.Inf(1), TTFTN: 10})
+	require.Equal(t, 0, tr.Stats(tgt).TTFTN, "Inf TTFT should be rejected")
+
+	tr.Merge(tgt, Stats{TTFTMs: math.NaN(), TTFTN: 10})
+	require.Equal(t, 0, tr.Stats(tgt).TTFTN, "NaN TTFT should be rejected")
+
+	// 3. Negative values or excessive counts rejected
+	tr.Merge(tgt, Stats{TTFTMs: -50, TTFTN: 10})
+	require.Equal(t, 0, tr.Stats(tgt).TTFTN, "negative TTFT should be rejected")
+
+	tr.Merge(tgt, Stats{TTFTMs: 100, TTFTN: 2_000_000})
+	require.Equal(t, 0, tr.Stats(tgt).TTFTN, "excessive count should be rejected")
+
+	// 4. Clamped error rate
+	tr.Merge(tgt, Stats{ErrRate: 5.0, ErrN: 5})
+	require.InDelta(t, 1.0, tr.Stats(tgt).ErrRate, 1e-6, "ErrRate should be clamped to 1.0")
+
+	// 5. Gradual breach increment (not instant degradation)
+	trFresh := newTracker(&now) // Breaches = 3
+	trFresh.Merge(tgt, Stats{Degraded: true})
+	require.False(t, trFresh.Degraded(tgt), "single degraded packet should not instantly degrade target with Breaches=3")
+
+	trFresh.Merge(tgt, Stats{Degraded: true})
+	require.False(t, trFresh.Degraded(tgt), "second degraded packet should not degrade yet")
+
+	trFresh.Merge(tgt, Stats{Degraded: true})
+	require.True(t, trFresh.Degraded(tgt), "third degraded packet satisfies Breaches=3")
+}
+

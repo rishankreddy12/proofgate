@@ -470,6 +470,8 @@ Defines latency and error budgets per target model for health degradation tracki
 | `probe_timeout` | duration | `10s` | Maximum execution timeout for synthetic background health probes. |
 | `gossip_addr` | string | `""` | Local bind address for cluster health gossip memberlist (e.g. `0.0.0.0:7946`). |
 | `gossip_peers` | list | `[]` | Seed list of peer addresses for health state synchronization across the cluster. |
+| `share_mode` | string | `"redis"` | Cross-replica health state sharing mode: `redis` (via Redis hashes), `gossip` (UDP memberlist), or `none`. Overridable via `PROOFGATE_HEALTH_SHARE_MODE`. Defaults to `redis` when Redis is configured. |
+| `gossip_secret` | string | `""` | HMAC-SHA256 secret key for signing and verifying UDP gossip datagrams (overridable via `PROOFGATE_GOSSIP_SECRET`). |
 
 ---
 

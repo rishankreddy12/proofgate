@@ -188,6 +188,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		return err
 	}
 	tracker := health.NewTracker(cfg.Health, cfg.SLOs, time.Now)
+	tracker.SetTargets(rt.Router.Targets())
 	rt.Router.SetHealth(tracker.Degraded)
 	state := &server.State{}
 	state.Store(rt)
@@ -278,6 +279,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		fileCfg = cfg
 		lastOvs []store.Override
 	)
+	var redisHealth *health.RedisHealth
 	rebuild := func() {
 		rtMu.Lock()
 		defer rtMu.Unlock()
@@ -291,7 +293,11 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 			return
 		}
 		next.Router.SetHealth(tracker.Degraded)
+		tracker.SetTargets(next.Router.Targets())
 		tracker.SetSLOs(merged.SLOs)
+		if redisHealth != nil {
+			redisHealth.SetTargets(next.Router.Targets())
+		}
 		state.Store(next)
 	}
 
@@ -334,14 +340,23 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		return time.Since(start), nil
 	}
 	go health.NewProber(tracker, probe, cfg.Health.ProbeInterval).Run(ctx)
-	if cfg.Health.GossipAddr != "" {
-		gossip := health.NewGossip(cfg.Health.GossipAddr, cfg.Health.GossipPeers, tracker, cfg.Health.ProbeInterval)
-		if err := gossip.Start(); err == nil {
-			defer gossip.Stop()
+	instanceID := uuid.NewString()
+
+	switch strings.ToLower(cfg.Health.ShareMode) {
+	case "redis":
+		if rdb != nil {
+			redisHealth = health.NewRedisHealth(rdb, instanceID, tracker, rt.Router.Targets(), 2*time.Second)
+			redisHealth.Start(ctx)
+			defer redisHealth.Stop()
+		}
+	case "gossip":
+		if cfg.Health.GossipAddr != "" {
+			gossip := health.NewGossipWithSecret(cfg.Health.GossipAddr, cfg.Health.GossipPeers, tracker, cfg.Health.ProbeInterval, cfg.Health.GossipSecret)
+			if err := gossip.Start(); err == nil {
+				defer gossip.Stop()
+			}
 		}
 	}
-
-	instanceID := uuid.NewString()
 	leader := proof.NewLeader(rdb, instanceID, "proofgate:leader:monitor", 30*time.Second, 10*time.Second)
 	leader.Start(ctx)
 

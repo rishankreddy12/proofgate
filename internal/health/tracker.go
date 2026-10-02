@@ -47,15 +47,32 @@ type entry struct {
 }
 
 type Tracker struct {
-	mu   sync.Mutex
-	cfg  config.HealthConfig
-	slos map[string]config.SLO
-	now  func() time.Time
-	m    map[router.Target]*entry
+	mu           sync.Mutex
+	cfg          config.HealthConfig
+	slos         map[string]config.SLO
+	now          func() time.Time
+	m            map[router.Target]*entry
+	knownTargets map[router.Target]bool
 }
 
 func NewTracker(cfg config.HealthConfig, slos map[string]config.SLO, now func() time.Time) *Tracker {
-	return &Tracker{cfg: cfg, slos: slos, now: now, m: map[router.Target]*entry{}}
+	return &Tracker{
+		cfg:          cfg,
+		slos:         slos,
+		now:          now,
+		m:            map[router.Target]*entry{},
+		knownTargets: map[router.Target]bool{},
+	}
+}
+
+// SetTargets restricts the tracker to only allow peer merges for the given targets.
+func (t *Tracker) SetTargets(targets []router.Target) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.knownTargets = make(map[router.Target]bool, len(targets))
+	for _, tg := range targets {
+		t.knownTargets[tg] = true
+	}
 }
 
 func (t *Tracker) SetSLOs(s map[string]config.SLO) {
@@ -109,12 +126,38 @@ func (t *Tracker) Observe(s Sample) {
 	t.evaluate(s.Target, e)
 }
 
-// Merge blends peer stats from cross-replica gossip into the local tracker's state
+// Merge blends peer stats from cross-replica gossip or Redis into the local tracker's state
 // using a damped alpha (0.1) to avoid sudden oscillations while rapidly spreading
 // upstream degradation awareness across replicas.
 func (t *Tracker) Merge(tg router.Target, peer Stats) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// Drop stats for unknown targets if a target allowlist is configured
+	if len(t.knownTargets) > 0 && !t.knownTargets[tg] {
+		return
+	}
+
+	// Validate floats: reject NaN and Inf
+	if math.IsNaN(peer.TTFTMs) || math.IsInf(peer.TTFTMs, 0) ||
+		math.IsNaN(peer.TTFTDevMs) || math.IsInf(peer.TTFTDevMs, 0) ||
+		math.IsNaN(peer.TPS) || math.IsInf(peer.TPS, 0) ||
+		math.IsNaN(peer.ErrRate) || math.IsInf(peer.ErrRate, 0) {
+		return
+	}
+
+	// Validate bounds: reject negative metrics or absurd sample counts
+	const maxCount = 1_000_000
+	if peer.TTFTMs < 0 || peer.TTFTDevMs < 0 || peer.TPS < 0 || peer.ErrRate < 0 ||
+		peer.TTFTN < 0 || peer.TPSN < 0 || peer.ErrN < 0 ||
+		peer.TTFTN > maxCount || peer.TPSN > maxCount || peer.ErrN > maxCount {
+		return
+	}
+
+	// Clamp error rate to [0, 1]
+	if peer.ErrRate > 1.0 {
+		peer.ErrRate = 1.0
+	}
 
 	e := t.get(tg)
 	const gossipAlpha = 0.1
@@ -152,7 +195,12 @@ func (t *Tracker) Merge(tg router.Target, peer Stats) {
 	}
 
 	if peer.Degraded && !e.Degraded {
-		e.breaches = max(e.breaches, t.cfg.Breaches)
+		e.breaches++
+		if e.breaches >= t.cfg.Breaches {
+			now := t.now()
+			e.Degraded, e.Since, e.Reason = true, now, "peer_degraded"
+			e.lastBreach = now
+		}
 	}
 
 	t.evaluate(tg, e)
@@ -183,7 +231,10 @@ func (t *Tracker) evaluate(tg router.Target, e *entry) {
 		}
 		return
 	}
-	e.breaches = 0
+	// Only reset breaches if we had sufficient samples to positively confirm healthy state
+	if (slo.TTFTMs > 0 && e.TTFTN >= min) || (slo.MaxErrorRate > 0 && e.ErrN >= min) || (slo.MinTPS > 0 && e.TPSN >= min/2+1) {
+		e.breaches = 0
+	}
 	if e.Degraded && now.Sub(e.lastBreach) >= t.cfg.Recover {
 		e.Degraded, e.Since, e.Reason = false, now, ""
 	}

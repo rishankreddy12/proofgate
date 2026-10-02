@@ -99,6 +99,22 @@ func New(cfg *config.Config, br *Breakers) *Router {
 
 func (r *Router) Routes() []*Route { return r.order }
 
+// Targets returns all unique configured route targets.
+func (r *Router) Targets() []Target {
+	var targets []Target
+	seen := make(map[Target]bool)
+	for _, rt := range r.order {
+		for _, tg := range rt.Targets {
+			if !seen[tg] {
+				seen[tg] = true
+				targets = append(targets, tg)
+			}
+		}
+	}
+	return targets
+}
+
+
 // Resolve maps the request's model field to a route: a configured route name, or "provider/model"
 // when the key allows direct targets.
 func (r *Router) Resolve(model string, allowDirect bool) (*Route, error) {
