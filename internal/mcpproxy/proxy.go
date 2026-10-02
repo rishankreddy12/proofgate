@@ -2,6 +2,7 @@ package mcpproxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/proofgate/proofgate/internal/agentrun"
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/auth"
+	"github.com/proofgate/proofgate/internal/httpx"
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
@@ -35,13 +37,14 @@ type Deps struct {
 	Audit               func(Audit) bool
 	Client              *http.Client
 	MaxRequestBodyBytes int64
+	RequestTimeout      time.Duration
 }
 
 type Proxy struct{ d Deps }
 
 func New(d Deps) *Proxy {
 	if d.Client == nil {
-		d.Client = &http.Client{} // no timeout: GET streams are long-lived
+		d.Client = httpx.New() // no timeout: GET streams are long-lived; POST requests have explicit deadline
 	}
 	if d.Audit == nil {
 		d.Audit = func(Audit) bool { return true }
@@ -52,7 +55,17 @@ func New(d Deps) *Proxy {
 var passHeaders = []string{"Content-Type", "Accept", "Mcp-Session-Id", "MCP-Protocol-Version", "Last-Event-ID"}
 
 func (p *Proxy) forward(r *http.Request, up Upstream, body []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, up.URL, bytes.NewReader(body))
+	ctx := r.Context()
+	if r.Method == http.MethodPost {
+		timeout := p.d.RequestTimeout
+		if timeout <= 0 {
+			timeout = 60 * time.Second
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, r.Method, up.URL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"time"
 
@@ -67,9 +68,31 @@ func classify(err error) (decision, bool /*breaker failure*/) {
 }
 
 // Execute runs fn over the plan following the failover rules in the plan document.
-func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, fn Attempt) (Result, error) {
+func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, deadline time.Duration, fn Attempt) (Result, error) {
 	var res Result
 	var lastErr error = api.NoHealthyTarget()
+	var shortestRetryAfter time.Duration
+
+	if deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, deadline)
+		defer cancel()
+	}
+
+	checkCtx := func() error {
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				msg := "gateway timeout: plan deadline exceeded"
+				if lastErr != nil {
+					msg = fmt.Sprintf("gateway timeout: plan deadline exceeded (last attempt: %v)", lastErr)
+				}
+				return api.GatewayTimeout(msg)
+			}
+			return err
+		}
+		return nil
+	}
+
 	maxAttempts := max(rp.MaxAttempts, 1)
 	for ti, t := range plan {
 		isLast := ti == len(plan)-1
@@ -77,7 +100,7 @@ func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, f
 			continue
 		}
 		for n := 0; n < maxAttempts; n++ {
-			if err := ctx.Err(); err != nil {
+			if err := checkCtx(); err != nil {
 				return res, err
 			}
 			res.Attempts++
@@ -89,10 +112,21 @@ func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, f
 				}
 				return res, nil
 			}
-			if ctx.Err() != nil {
-				return res, ctx.Err()
-			}
 			lastErr = err
+			var pe *provider.Error
+			if errors.As(err, &pe) {
+				if pe.RetryAfter > 0 {
+					if br != nil {
+						br.OpenFor(t, pe.RetryAfter)
+					}
+					if shortestRetryAfter == 0 || pe.RetryAfter < shortestRetryAfter {
+						shortestRetryAfter = pe.RetryAfter
+					}
+				}
+			}
+			if err := checkCtx(); err != nil {
+				return res, err
+			}
 			d, breakerFail := classify(err)
 			if breakerFail && br != nil {
 				br.Failure(t)
@@ -105,9 +139,18 @@ func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, f
 			}
 			if n < maxAttempts-1 {
 				if err := sleep(ctx, backoff(rp.BaseDelay, n)); err != nil {
-					return res, err
+					return res, checkCtx()
 				}
 			}
+		}
+	}
+	if shortestRetryAfter > 0 {
+		var pe *provider.Error
+		var ae *api.Error
+		if errors.As(lastErr, &pe) {
+			pe.RetryAfter = shortestRetryAfter
+		} else if errors.As(lastErr, &ae) {
+			ae.RetryAfter = shortestRetryAfter
 		}
 	}
 	return res, lastErr

@@ -7,12 +7,13 @@ import (
 
 // Spec is the resolved configuration of one provider (API key already read from its source).
 type Spec struct {
-	Name    string
-	Type    string // openai | anthropic | gemini
-	BaseURL string
-	APIKey  string
-	KeyFunc KeyFunc
-	Headers map[string]string
+	Name             string
+	Type             string // openai | anthropic | gemini
+	BaseURL          string
+	APIKey           string
+	KeyFunc          KeyFunc
+	Headers          map[string]string
+	MaxResponseBytes int64
 }
 
 type Registry struct {
@@ -28,11 +29,11 @@ func NewRegistry(specs []Spec) (*Registry, error) {
 		var p Provider
 		switch s.Type {
 		case "openai":
-			p = NewOpenAI(OpenAIConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, Headers: s.Headers})
+			p = NewOpenAI(OpenAIConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, Headers: s.Headers, MaxResponseBytes: s.MaxResponseBytes})
 		case "anthropic":
-			p = NewAnthropic(AnthropicConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc})
+			p = NewAnthropic(AnthropicConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, MaxResponseBytes: s.MaxResponseBytes})
 		case "gemini":
-			p = NewGemini(GeminiConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc})
+			p = NewGemini(GeminiConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, MaxResponseBytes: s.MaxResponseBytes})
 		default:
 			return nil, fmt.Errorf("unknown provider type %q for %q", s.Type, s.Name)
 		}

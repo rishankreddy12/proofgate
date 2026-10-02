@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/proofgate/proofgate/internal/httpx"
 )
 
 type TokenSource func(ctx context.Context) (string, error)
@@ -48,7 +50,7 @@ func vaultPost(ctx context.Context, c *http.Client, url, token string, body, out
 
 func KubernetesAuth(addr, role, jwtPath string, client *http.Client) TokenSource {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = httpx.New(httpx.WithTimeout(10 * time.Second))
 	}
 	var (
 		mu      sync.Mutex
@@ -89,7 +91,7 @@ type VaultKEK struct {
 
 func NewVaultKEK(addr, key string, tokens TokenSource, client *http.Client) *VaultKEK {
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = httpx.New(httpx.WithTimeout(10 * time.Second))
 	}
 	return &VaultKEK{addr: strings.TrimRight(addr, "/"), key: key, tokens: tokens, client: client}
 }

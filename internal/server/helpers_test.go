@@ -52,6 +52,7 @@ routes:
     targets: [{provider: a, model: small}, {provider: b, model: large}]
   - name: fast
     timeout: 100ms
+    first_token_timeout: 100ms
     retry: {max_attempts: 1, base_delay: 1ms}
     targets: [{provider: a, model: small}, {provider: b, model: large}]
   - name: embed

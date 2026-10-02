@@ -264,6 +264,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		Runs:                runs,
 		Audit:               mcpAudit.Emit,
 		MaxRequestBodyBytes: cfg.MCP.MaxRequestBodyBytes,
+		RequestTimeout:      cfg.MCP.RequestTimeout,
 	})
 
 	authMW := auth.NewMiddlewareWithConfig(st, cfg.Auth.CacheTTL, cfg.Auth.NegativeCacheTTL, cfg.Auth.MaxCachedKeys)

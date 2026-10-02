@@ -10,25 +10,32 @@ import (
 	"strings"
 
 	"github.com/proofgate/proofgate/internal/api"
+	"github.com/proofgate/proofgate/internal/httpx"
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
 type OpenAIConfig struct {
-	Name    string
-	BaseURL string // e.g. https://api.openai.com/v1 or http://ollama:11434/v1
-	APIKey  string
-	KeyFunc KeyFunc
-	Headers map[string]string
+	Name             string
+	BaseURL          string // e.g. https://api.openai.com/v1 or http://ollama:11434/v1
+	APIKey           string
+	KeyFunc          KeyFunc
+	Headers          map[string]string
+	MaxResponseBytes int64
 }
 
 type OpenAI struct {
-	cfg    OpenAIConfig
-	client *http.Client
+	cfg              OpenAIConfig
+	client           *http.Client
+	maxResponseBytes int64
 }
 
 func NewOpenAI(cfg OpenAIConfig) *OpenAI {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	return &OpenAI{cfg: cfg, client: newClient()}
+	maxResp := cfg.MaxResponseBytes
+	if maxResp <= 0 {
+		maxResp = 32 << 20
+	}
+	return &OpenAI{cfg: cfg, client: newClient(), maxResponseBytes: maxResp}
 }
 
 func (p *OpenAI) Name() string { return p.cfg.Name }
@@ -86,7 +93,11 @@ func (p *OpenAI) Chat(ctx context.Context, model string, req *api.ChatRequest) (
 	}
 	defer resp.Body.Close()
 	var out api.ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	limited := httpx.LimitReader(resp.Body, p.maxResponseBytes)
+	if err := json.NewDecoder(limited).Decode(&out); err != nil {
+		if errors.Is(err, httpx.ErrResponseTooLarge) {
+			return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "upstream response exceeded size limit", Retryable: false}
+		}
 		return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "bad JSON from upstream: " + err.Error(), Retryable: true}
 	}
 	out.Model = model
@@ -100,7 +111,7 @@ func (p *OpenAI) ChatStream(ctx context.Context, model string, req *api.ChatRequ
 		cancel()
 		return nil, err
 	}
-	return &openAIStream{name: p.cfg.Name, model: model, body: resp.Body, r: sse.NewReader(resp.Body), cancel: cancel}, nil
+	return &openAIStream{name: p.cfg.Name, model: model, body: resp.Body, r: sse.NewReaderWithLimit(resp.Body, int(p.maxResponseBytes)), cancel: cancel}, nil
 }
 
 type openAIStream struct {
@@ -116,6 +127,9 @@ func (s *openAIStream) Recv() (*api.ChatChunk, error) {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil, io.EOF
+			}
+			if errors.Is(err, sse.ErrEventTooLarge) {
+				return nil, &Error{Provider: s.name, Status: 502, Message: "sse event exceeded max size", Retryable: false}
 			}
 			return nil, &Error{Provider: s.name, Message: "stream read: " + err.Error(), Retryable: true}
 		}
@@ -148,7 +162,11 @@ func (p *OpenAI) Embed(ctx context.Context, model string, req *api.EmbeddingRequ
 	}
 	defer resp.Body.Close()
 	var out api.EmbeddingResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	limited := httpx.LimitReader(resp.Body, p.maxResponseBytes)
+	if err := json.NewDecoder(limited).Decode(&out); err != nil {
+		if errors.Is(err, httpx.ErrResponseTooLarge) {
+			return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "upstream response exceeded size limit", Retryable: false}
+		}
 		return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "bad JSON: " + err.Error(), Retryable: true}
 	}
 	out.Model = model

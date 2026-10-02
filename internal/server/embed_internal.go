@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/router"
@@ -15,11 +16,20 @@ func (h *Handlers) EmbedInternal(ctx context.Context, route string, inputs []str
 	if err != nil {
 		return nil, api.Usage{}, router.Target{}, err
 	}
+	deadline := r.Deadline
+	if deadline <= 0 {
+		deadline = 90 * time.Second
+	}
 	var out *api.EmbeddingResponse
-	res, err := router.Execute(ctx, rt.Router.Plan(r), r.Retry, h.Breakers, func(ctx context.Context, t router.Target) error {
+	res, err := router.Execute(ctx, rt.Router.Plan(r), r.Retry, h.Breakers, deadline, func(ctx context.Context, t router.Target) error {
 		p, ok := rt.Registry.Get(t.Provider)
 		if !ok {
 			return api.NoHealthyTarget()
+		}
+		if r.Timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, r.Timeout)
+			defer cancel()
 		}
 		resp, err := p.Embed(ctx, t.Model, &api.EmbeddingRequest{Input: inputs})
 		if err == nil {

@@ -66,6 +66,21 @@ func (b *Breakers) Failure(t Target) {
 	}
 }
 
+// OpenFor opens the circuit breaker for target t for duration d (e.g. from upstream Retry-After).
+func (b *Breakers) OpenFor(t Target, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.get(t)
+	until := b.now().Add(d)
+	if until.After(s.openUntil) {
+		s.openUntil = until
+		s.probing = false
+	}
+}
+
 func (b *Breakers) State(t Target) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

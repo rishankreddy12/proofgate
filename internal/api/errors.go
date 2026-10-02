@@ -45,6 +45,12 @@ func Upstream(msg string) *Error {
 func NoHealthyTarget() *Error {
 	return &Error{Status: 503, Message: "no healthy target for this route", Type: "api_error", Code: "no_healthy_target"}
 }
+func GatewayTimeout(msg string) *Error {
+	if msg == "" {
+		msg = "gateway timeout"
+	}
+	return &Error{Status: 504, Message: msg, Type: "api_error", Code: "gateway_timeout"}
+}
 func Internal() *Error {
 	return &Error{Status: 500, Message: "internal error", Type: "api_error", Code: "internal_error"}
 }

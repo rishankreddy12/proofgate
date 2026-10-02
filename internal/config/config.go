@@ -24,16 +24,17 @@ type MCPServerConfig struct {
 }
 
 type ServerConfig struct {
-	Addr                string        `yaml:"addr"`
-	AdminAddr           string        `yaml:"admin_addr"`
-	MetricsAddr         string        `yaml:"metrics_addr"`
-	EnablePprof         bool          `yaml:"enable_pprof"`
-	MaxRequestBodyBytes int64         `yaml:"max_request_body_bytes"`
-	ReadHeaderTimeout   time.Duration `yaml:"read_header_timeout"`
-	ReadTimeout         time.Duration `yaml:"read_timeout"`
-	IdleTimeout         time.Duration `yaml:"idle_timeout"`
-	DrainTimeout        time.Duration `yaml:"drain_timeout"`
-	TrustedProxies      []string      `yaml:"trusted_proxies"`
+	Addr                     string        `yaml:"addr"`
+	AdminAddr                string        `yaml:"admin_addr"`
+	MetricsAddr              string        `yaml:"metrics_addr"`
+	EnablePprof              bool          `yaml:"enable_pprof"`
+	MaxRequestBodyBytes      int64         `yaml:"max_request_body_bytes"`
+	MaxUpstreamResponseBytes int64         `yaml:"max_upstream_response_bytes"`
+	ReadHeaderTimeout        time.Duration `yaml:"read_header_timeout"`
+	ReadTimeout              time.Duration `yaml:"read_timeout"`
+	IdleTimeout              time.Duration `yaml:"idle_timeout"`
+	DrainTimeout             time.Duration `yaml:"drain_timeout"`
+	TrustedProxies           []string      `yaml:"trusted_proxies"`
 }
 
 // IsLoopbackAddr returns true if the host component of addr is a loopback address
@@ -125,7 +126,8 @@ type AuthConfig struct {
 }
 
 type MCPProxyConfig struct {
-	MaxRequestBodyBytes int64 `yaml:"max_request_body_bytes"`
+	MaxRequestBodyBytes int64         `yaml:"max_request_body_bytes"`
+	RequestTimeout      time.Duration `yaml:"request_timeout"`
 }
 
 type ProviderConfig struct {
@@ -221,6 +223,8 @@ type RouteConfig struct {
 	Strategy          string           `yaml:"strategy"`
 	Retry             RetryConfig      `yaml:"retry"`
 	Timeout           time.Duration    `yaml:"timeout"`
+	Deadline          time.Duration    `yaml:"deadline"`
+	FirstTokenTimeout time.Duration    `yaml:"first_token_timeout"`
 	StreamIdleTimeout time.Duration    `yaml:"stream_idle_timeout"`
 	Embeddings        bool             `yaml:"embeddings"` // route serves /v1/embeddings
 	Cache             CacheConfig      `yaml:"cache"`
@@ -392,6 +396,9 @@ func (c *Config) applyDefaults() {
 	if c.Server.MaxRequestBodyBytes == 0 {
 		c.Server.MaxRequestBodyBytes = 10 << 20 // 10MB
 	}
+	if c.Server.MaxUpstreamResponseBytes == 0 {
+		c.Server.MaxUpstreamResponseBytes = 32 << 20 // 32MB
+	}
 	if c.Server.ReadHeaderTimeout == 0 {
 		c.Server.ReadHeaderTimeout = 10 * time.Second
 	}
@@ -424,6 +431,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Analytics.MCPBatcher.FlushInterval == 0 {
 		c.Analytics.MCPBatcher.FlushInterval = time.Second
+	}
+	if c.MCP.RequestTimeout == 0 {
+		c.MCP.RequestTimeout = 60 * time.Second
 	}
 	if c.Analytics.FlushTimeout == 0 {
 		c.Analytics.FlushTimeout = 10 * time.Second
@@ -532,6 +542,16 @@ func (c *Config) applyDefaults() {
 		if r.Timeout == 0 {
 			r.Timeout = 120 * time.Second
 		}
+		if r.Deadline == 0 {
+			r.Deadline = 90 * time.Second
+		}
+		if r.FirstTokenTimeout == 0 {
+			if r.Timeout > 0 && r.Timeout < 15*time.Second {
+				r.FirstTokenTimeout = r.Timeout
+			} else {
+				r.FirstTokenTimeout = 15 * time.Second
+			}
+		}
 		if r.StreamIdleTimeout == 0 {
 			r.StreamIdleTimeout = 30 * time.Second
 		}
@@ -584,6 +604,9 @@ func (c *Config) validate() error {
 	if c.Server.MaxRequestBodyBytes < 0 {
 		errs = append(errs, errors.New("server.max_request_body_bytes must be >= 0"))
 	}
+	if c.Server.MaxUpstreamResponseBytes < 0 {
+		errs = append(errs, errors.New("server.max_upstream_response_bytes must be >= 0"))
+	}
 	if c.Server.ReadHeaderTimeout < 0 {
 		errs = append(errs, errors.New("server.read_header_timeout must be >= 0"))
 	}
@@ -619,6 +642,9 @@ func (c *Config) validate() error {
 	}
 	if c.MCP.MaxRequestBodyBytes < 0 {
 		errs = append(errs, errors.New("mcp.max_request_body_bytes must be >= 0"))
+	}
+	if c.MCP.RequestTimeout < 0 {
+		errs = append(errs, errors.New("mcp.request_timeout must be >= 0"))
 	}
 	if c.Defaults.MaxTokensReserve < 0 || c.Defaults.DefaultMaxTokens < 0 || c.Defaults.EmbedderCacheSize < 0 {
 		errs = append(errs, errors.New("defaults limits must be >= 0"))
@@ -735,6 +761,12 @@ func (c *Config) validate() error {
 		if r.Timeout < 0 {
 			errs = append(errs, fmt.Errorf("route %q: timeout must be >= 0", r.Name))
 		}
+		if r.Deadline < 0 {
+			errs = append(errs, fmt.Errorf("route %q: deadline must be >= 0", r.Name))
+		}
+		if r.FirstTokenTimeout < 0 {
+			errs = append(errs, fmt.Errorf("route %q: first_token_timeout must be >= 0", r.Name))
+		}
 		if r.StreamIdleTimeout < 0 {
 			errs = append(errs, fmt.Errorf("route %q: stream_idle_timeout must be >= 0", r.Name))
 		}
@@ -823,6 +855,10 @@ func (c *Config) validate() error {
 // ProviderSpecs resolves API keys from the environment and database key resolver.
 func (c *Config) ProviderSpecs(getenv func(string) string, keys func(provider string) provider.KeyFunc) []provider.Spec {
 	out := make([]provider.Spec, 0, len(c.Providers))
+	maxRespBytes := c.Server.MaxUpstreamResponseBytes
+	if maxRespBytes <= 0 {
+		maxRespBytes = 32 << 20
+	}
 	for _, p := range c.Providers {
 		key := ""
 		if p.APIKeyEnv != "" {
@@ -832,7 +868,15 @@ func (c *Config) ProviderSpecs(getenv func(string) string, keys func(provider st
 		if p.APIKeyDB && keys != nil {
 			kf = keys(p.Name)
 		}
-		out = append(out, provider.Spec{Name: p.Name, Type: p.Type, BaseURL: p.BaseURL, APIKey: key, KeyFunc: kf, Headers: p.Headers})
+		out = append(out, provider.Spec{
+			Name:             p.Name,
+			Type:             p.Type,
+			BaseURL:          p.BaseURL,
+			APIKey:           key,
+			KeyFunc:          kf,
+			Headers:          p.Headers,
+			MaxResponseBytes: maxRespBytes,
+		})
 	}
 	return out
 }

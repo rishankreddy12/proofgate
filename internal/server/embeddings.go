@@ -82,11 +82,20 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var out *api.EmbeddingResponse
-	res, err := router.Execute(ctx, rt.Router.Plan(route), route.Retry, h.Breakers,
+	deadline := route.Deadline
+	if deadline <= 0 {
+		deadline = 90 * time.Second
+	}
+	res, err := router.Execute(ctx, rt.Router.Plan(route), route.Retry, h.Breakers, deadline,
 		func(ctx context.Context, t router.Target) error {
 			pr, ok := rt.Registry.Get(t.Provider)
 			if !ok {
 				return api.NoHealthyTarget()
+			}
+			if route.Timeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, route.Timeout)
+				defer cancel()
 			}
 			resp, err := pr.Embed(ctx, t.Model, &req)
 			if err == nil {

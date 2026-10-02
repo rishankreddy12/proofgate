@@ -31,13 +31,30 @@ type streamResult struct {
 // openStream runs the router until one target produces a first chunk (rule 1 in the plan).
 func (h *Handlers) openStream(ctx context.Context, rt *Runtime, c *pipeline.Call) (provider.Stream, *api.ChatChunk, context.CancelFunc, error) {
 	plan := planFor(rt, c)
-	fn := func(ctx context.Context, t router.Target) (streamResult, error) {
+	ftt := c.Route.FirstTokenTimeout
+	if ftt <= 0 {
+		ftt = 15 * time.Second
+	}
+	deadline := c.Route.Deadline
+	if deadline <= 0 {
+		deadline = 90 * time.Second
+	}
+	fn := func(attemptCtx context.Context, t router.Target) (streamResult, error) {
 		p, ok := rt.Registry.Get(t.Provider)
 		if !ok {
 			return streamResult{}, api.NoHealthyTarget()
 		}
 		sctx, scancel := context.WithCancel(ctx)
-		ttft := time.AfterFunc(c.Route.Timeout, scancel)
+		ttft := time.AfterFunc(ftt, scancel)
+		stopAttemptWatch := make(chan struct{})
+		defer close(stopAttemptWatch)
+		go func() {
+			select {
+			case <-attemptCtx.Done():
+				scancel()
+			case <-stopAttemptWatch:
+			}
+		}()
 		start := time.Now()
 		s, err := p.ChatStream(sctx, t.Model, c.Request)
 		var first *api.ChatChunk
@@ -56,7 +73,7 @@ func (h *Handlers) openStream(ctx context.Context, rt *Runtime, c *pipeline.Call
 		}
 		if err != nil {
 			scancel()
-			if !stoppedInTime && ctx.Err() == nil {
+			if !stoppedInTime && attemptCtx.Err() == nil {
 				return streamResult{}, &provider.Error{Provider: t.Provider, Status: 504, Message: "time to first token exceeded", Retryable: true}
 			}
 			if errors.Is(err, io.EOF) {
@@ -95,7 +112,7 @@ func (h *Handlers) openStream(ctx context.Context, rt *Runtime, c *pipeline.Call
 			delay = h.Health.HedgeDelay(plan[0], defDelay)
 		}
 		resResult, res, hedged, err = router.ExecuteHedged[streamResult](
-			ctx, plan, c.Route.Retry, h.Breakers, delay,
+			ctx, plan, c.Route.Retry, h.Breakers, deadline, delay,
 			func() bool {
 				allowed := b.Allow()
 				if allowed && h.Metrics != nil {
@@ -119,7 +136,7 @@ func (h *Handlers) openStream(ctx context.Context, rt *Runtime, c *pipeline.Call
 			}
 		}
 	} else {
-		res, err = router.Execute(ctx, plan, c.Route.Retry, h.Breakers, func(ctx context.Context, t router.Target) error {
+		res, err = router.Execute(ctx, plan, c.Route.Retry, h.Breakers, deadline, func(ctx context.Context, t router.Target) error {
 			r, e := fn(ctx, t)
 			if e == nil {
 				resResult = r
@@ -139,6 +156,8 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 	var chunks <-chan *api.ChatChunk
 	var upstreamErr func() error
 	var firstAt time.Time
+	var stream provider.Stream
+	var cancel context.CancelFunc
 	if handled {
 		ch := make(chan *api.ChatChunk)
 		go func() {
@@ -154,7 +173,9 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 		}()
 		chunks, upstreamErr = ch, func() error { return nil }
 	} else {
-		stream, first, cancel, err := h.openStream(ctx, rt, c)
+		var first *api.ChatChunk
+		var err error
+		stream, first, cancel, err = h.openStream(ctx, rt, c)
 		if err != nil {
 			c.Err = upstreamError(err)
 			if c.Err == nil { // client left
@@ -205,6 +226,14 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 			_ = sw.Data(&api.ChatChunk{
 				Choices: []api.ChunkChoice{{Delta: api.ChunkDelta{Content: rem}}},
 			})
+		}
+	}
+	if clientGone {
+		if cancel != nil {
+			cancel()
+		}
+		if stream != nil {
+			_ = stream.Close()
 		}
 	}
 	if err := upstreamErr(); err != nil && !clientGone {

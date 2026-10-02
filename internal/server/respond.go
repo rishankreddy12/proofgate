@@ -58,15 +58,23 @@ func upstreamError(err error) error {
 		return nil
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &api.Error{Status: 504, Message: "upstream timed out", Type: "api_error", Code: "upstream_timeout"}
+		return api.GatewayTimeout("upstream timed out")
 	}
 	var pe *provider.Error
 	if errors.As(err, &pe) {
+		var outErr *api.Error
 		switch pe.Status {
 		case 400, 404, 413, 422:
-			return &api.Error{Status: pe.Status, Message: pe.Message, Type: "invalid_request_error", Code: "upstream_rejected"}
+			outErr = &api.Error{Status: pe.Status, Message: pe.Message, Type: "invalid_request_error", Code: "upstream_rejected"}
+		case 429:
+			outErr = &api.Error{Status: 429, Message: pe.Message, Type: "rate_limit_error", Code: "rate_limit_exceeded"}
+		default:
+			outErr = api.Upstream(fmt.Sprintf("all targets failed; last: %s %d", pe.Provider, pe.Status))
 		}
-		return api.Upstream(fmt.Sprintf("all targets failed; last: %s %d", pe.Provider, pe.Status))
+		if pe.RetryAfter > 0 {
+			outErr.RetryAfter = pe.RetryAfter
+		}
+		return outErr
 	}
 	return api.Upstream("all targets failed")
 }

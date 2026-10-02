@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/mockllm"
@@ -83,3 +85,59 @@ func TestOpenAIEmbed(t *testing.T) {
 	require.Len(t, out.Data, 2)
 	require.Len(t, out.Data[0].Embedding, 256)
 }
+
+func TestOpenAIResponseSizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Write 5KB response
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"` + strings.Repeat("A", 5000) + `"}}]}`))
+	}))
+	defer srv.Close()
+
+	// Config with 1KB limit
+	p := NewOpenAI(OpenAIConfig{Name: "mock", BaseURL: srv.URL, MaxResponseBytes: 1024})
+	_, err := p.Chat(context.Background(), "m", userReq("hi", 1))
+	var pe *Error
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, 502, pe.Status)
+	require.False(t, pe.Retryable)
+	require.Contains(t, pe.Message, "size limit")
+}
+
+func TestOpenAISSEEventSizeLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		// Send giant SSE event
+		_, _ = w.Write([]byte("data: " + strings.Repeat("B", 5000) + "\n\n"))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAI(OpenAIConfig{Name: "mock", BaseURL: srv.URL, MaxResponseBytes: 1024})
+	stream, err := p.ChatStream(context.Background(), "m", userReq("hi", 1))
+	require.NoError(t, err)
+	defer stream.Close()
+
+	_, err = stream.Recv()
+	var pe *Error
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, 502, pe.Status)
+	require.False(t, pe.Retryable)
+	require.Contains(t, pe.Message, "max size")
+}
+
+func TestOpenAIRetryAfterHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "45")
+		w.WriteHeader(429)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"message": "rate limit exceeded"}})
+	}))
+	defer srv.Close()
+
+	p := NewOpenAI(OpenAIConfig{Name: "mock", BaseURL: srv.URL})
+	_, err := p.Chat(context.Background(), "m", userReq("hi", 1))
+	var pe *Error
+	require.ErrorAs(t, err, &pe)
+	require.Equal(t, 429, pe.Status)
+	require.Equal(t, 45*time.Second, pe.RetryAfter)
+}
+

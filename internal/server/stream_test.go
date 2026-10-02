@@ -164,3 +164,54 @@ routes: [{name: default, targets: [{provider: u, model: m}]}]`, up.URL)))
 		t.Fatal("upstream request was not cancelled after client disconnect")
 	}
 }
+
+func TestClientDisconnectStalledUpstreamAbortsQuickly(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fl := w.(http.Flusher)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"t0 \"}}]}\n\n")
+		fl.Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(10 * time.Second):
+			return
+		}
+	}))
+	defer up.Close()
+
+	cfg, err := config.Parse([]byte(fmt.Sprintf(`
+providers: [{name: u, type: openai, base_url: %q}]
+routes: [{name: default, targets: [{provider: u, model: m}], stream_idle_timeout: 10s}]`, up.URL)))
+	require.NoError(t, err)
+	br := router.NewBreakers(5, time.Minute, time.Now)
+	rt, _ := BuildRuntime(cfg, br, os.Getenv, nil)
+	st := &State{}
+	st.Store(rt)
+	handlerDone := make(chan struct{})
+	h := &Handlers{State: st, Breakers: br, Pipeline: pipeline.New(), Now: time.Now}
+	gw := httptest.NewServer(h.Routes(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer close(handlerDone)
+			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), auth.Principal{TenantID: "t"})))
+		})
+	}))
+	defer gw.Close()
+
+	e := &env{gw: gw}
+	resp := e.post(t, "/v1/chat/completions", chat("default", true, "hi"))
+	br2 := bufio.NewReader(resp.Body)
+	_, err = br2.ReadString('\n')
+	require.NoError(t, err)
+
+	disconnectStart := time.Now()
+	_ = resp.Body.Close()
+
+	select {
+	case <-handlerDone:
+		dur := time.Since(disconnectStart)
+		require.Less(t, dur, 300*time.Millisecond, "handler must return quickly upon client disconnect even if upstream is stalled")
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not return after client disconnect")
+	}
+}

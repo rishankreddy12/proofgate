@@ -84,3 +84,20 @@ func TestReaderFragmentation(t *testing.T) {
 	_, err = r.Next()
 	require.ErrorIs(t, err, io.EOF)
 }
+
+func TestReaderEnforcesEventLimit(t *testing.T) {
+	// An event with 100 bytes of data
+	in := "data: " + strings.Repeat("X", 100) + "\n\n"
+
+	// Reader with limit 50 bytes should reject the event with ErrEventTooLarge
+	rSmall := NewReaderWithLimit(strings.NewReader(in), 50)
+	_, err := rSmall.Next()
+	require.ErrorIs(t, err, ErrEventTooLarge)
+
+	// Reader with limit 200 bytes should allow the event
+	rBig := NewReaderWithLimit(strings.NewReader(in), 200)
+	ev, err := rBig.Next()
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("X", 100), string(ev.Data))
+}
+

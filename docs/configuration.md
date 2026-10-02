@@ -43,6 +43,7 @@ Controls bind addresses for client traffic and management APIs.
 | `metrics_addr` | string | `"127.0.0.1:9091"` | Listen address for isolated `/metrics` and `/healthz` endpoints (overridable via `PROOFGATE_METRICS_ADDR`). |
 | `enable_pprof` | boolean | `false` | Enable Go runtime profiling endpoints under `/debug/pprof/` on the admin listener (requires `admin` role with `debug:pprof` permission). |
 | `max_request_body_bytes` | integer | `10485760` | Maximum allowed request body size in bytes for chat and embeddings (default 10MB). |
+| `max_upstream_response_bytes` | integer | `33554432` | Maximum allowed response body size in bytes from upstream providers (default 32MB). |
 | `read_header_timeout` | duration | `10s` | Maximum time allowed to read HTTP request headers before closing connection. |
 | `read_timeout` | duration | `15s` | Maximum time allowed to read the entire HTTP request including body. |
 | `idle_timeout` | duration | `120s` | Maximum time to keep idle keep-alive HTTP connections open. |
@@ -56,6 +57,7 @@ server:
   metrics_addr: "127.0.0.1:9091"
   enable_pprof: false
   max_request_body_bytes: 10485760
+  max_upstream_response_bytes: 33554432
   read_header_timeout: 10s
   read_timeout: 15s
   idle_timeout: 120s
@@ -196,10 +198,12 @@ Global options for the Model Context Protocol reverse proxy.
 | :--- | :--- | :--- | :--- |
 | `mcp` | object | - | Global MCP proxy options. |
 | `max_request_body_bytes` | integer | `4194304` | Maximum allowed request body size in bytes for MCP JSON-RPC payloads (default 4MB). |
+| `request_timeout` | duration | `60s` | Maximum HTTP request timeout for outbound POST calls to upstream MCP servers (default 60s). |
 
 ```yaml
 mcp:
   max_request_body_bytes: 4194304
+  request_timeout: 60s
 ```
 
 ---
@@ -346,7 +350,9 @@ Virtual routes define client model aliases, failover, caching, and guardrails.
 | `retry` | object | - | Retry policy for failed attempts. |
 | `max_attempts` | integer | `3` | Maximum number of upstream retry attempts across targets. |
 | `base_delay` | duration | `100ms` | Initial exponential backoff delay before retries. |
-| `timeout` | duration | `120s` | Overall per-request execution timeout. |
+| `timeout` | duration | `120s` | Overall per-attempt execution timeout. |
+| `deadline` | duration | `90s` | Maximum end-to-end plan deadline across all targets and retries (default 90s). |
+| `first_token_timeout` | duration | `15s` | Maximum time allowed to receive the first token in streaming requests before failing over (default 15s). |
 | `stream_idle_timeout` | duration | `15s` | Timeout between streaming chunks before aborting stalled streams. |
 | `embeddings` | boolean | `false` | When `true`, route accepts `/v1/embeddings` requests instead of chat. |
 

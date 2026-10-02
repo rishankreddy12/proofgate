@@ -93,12 +93,19 @@ func price(rt *Runtime, c *pipeline.Call, completionText string) {
 	}
 }
 
-// execChat runs a non-streaming call over the route's plan. Route.Timeout bounds the whole call.
+// execChat runs a non-streaming call over the route's plan.
 func (h *Handlers) execChat(ctx context.Context, rt *Runtime, c *pipeline.Call) error {
-	ctx, cancel := context.WithTimeout(ctx, c.Route.Timeout)
-	defer cancel()
+	deadline := c.Route.Deadline
+	if deadline <= 0 {
+		deadline = 90 * time.Second
+	}
 	plan := planFor(rt, c)
 	fn := func(ctx context.Context, t router.Target) (*api.ChatResponse, error) {
+		if c.Route.Timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, c.Route.Timeout)
+			defer cancel()
+		}
 		p, ok := rt.Registry.Get(t.Provider)
 		if !ok {
 			return nil, api.NoHealthyTarget()
@@ -135,7 +142,7 @@ func (h *Handlers) execChat(ctx context.Context, rt *Runtime, c *pipeline.Call) 
 			delay = h.Health.HedgeDelay(plan[0], defDelay)
 		}
 		resp, res, hedged, err = router.ExecuteHedged[*api.ChatResponse](
-			ctx, plan, c.Route.Retry, h.Breakers, delay,
+			ctx, plan, c.Route.Retry, h.Breakers, deadline, delay,
 			func() bool {
 				allowed := b.Allow()
 				if allowed && h.Metrics != nil {
@@ -159,7 +166,7 @@ func (h *Handlers) execChat(ctx context.Context, rt *Runtime, c *pipeline.Call) 
 			}
 		}
 	} else {
-		res, err = router.Execute(ctx, plan, c.Route.Retry, h.Breakers, func(ctx context.Context, t router.Target) error {
+		res, err = router.Execute(ctx, plan, c.Route.Retry, h.Breakers, deadline, func(ctx context.Context, t router.Target) error {
 			r, e := fn(ctx, t)
 			if e == nil {
 				resp = r

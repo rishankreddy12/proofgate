@@ -2,8 +2,12 @@ package router
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/proofgate/proofgate/internal/api"
 )
 
 // HedgeBudget caps hedges at maxExtra × requests over the last 1,000 requests.
@@ -46,12 +50,17 @@ type outcome[T any] struct {
 	t   Target
 }
 
-func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, delay time.Duration,
+func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, deadline time.Duration, delay time.Duration,
 	allow func() bool, fn func(ctx context.Context, t Target) (T, error), discard func(T)) (T, Result, bool, error) {
 	var zero T
+	if deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, deadline)
+		defer cancel()
+	}
 	run := func(plan []Target) (T, Result, error) {
 		var v T
-		res, err := Execute(ctx, plan, rp, br, func(ctx context.Context, t Target) error {
+		res, err := Execute(ctx, plan, rp, br, 0, func(ctx context.Context, t Target) error {
 			x, err := fn(ctx, t)
 			if err == nil {
 				v = x
@@ -152,6 +161,13 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 		case <-ctx.Done():
 			cancelA()
 			cancelB()
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				msg := "gateway timeout: plan deadline exceeded"
+				if lastErr != nil {
+					msg = fmt.Sprintf("gateway timeout: plan deadline exceeded (last attempt: %v)", lastErr)
+				}
+				return zero, Result{}, hedged, api.GatewayTimeout(msg)
+			}
 			return zero, Result{}, hedged, ctx.Err()
 		}
 	}

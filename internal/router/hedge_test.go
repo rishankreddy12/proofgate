@@ -29,7 +29,7 @@ func TestHedgeWinsWhenPrimaryIsSlow(t *testing.T) {
 	}
 	start := time.Now()
 	v, res, hedged, err := ExecuteHedged(context.Background(), []Target{A, B}, RetryPolicy{MaxAttempts: 1}, nil,
-		50*time.Millisecond, func() bool { return true }, fn, nil)
+		5*time.Second, 50*time.Millisecond, func() bool { return true }, fn, nil)
 	require.NoError(t, err)
 	require.True(t, hedged)
 	require.Equal(t, "fast", v)
@@ -48,7 +48,7 @@ func TestNoHedgeWhenPrimaryIsFastOrBudgetExhausted(t *testing.T) {
 		return t.Provider, nil
 	}
 	v, _, hedged, err := ExecuteHedged(context.Background(), []Target{A, B}, RetryPolicy{MaxAttempts: 1}, nil,
-		50*time.Millisecond, func() bool { return false }, fn, nil)
+		5*time.Second, 50*time.Millisecond, func() bool { return false }, fn, nil)
 	require.NoError(t, err)
 	require.False(t, hedged)
 	require.Equal(t, "a", v)
@@ -66,7 +66,7 @@ func TestBothFailFallsThroughToRest(t *testing.T) {
 		return "", &provider.Error{Status: 503, Retryable: true}
 	}
 	v, res, _, err := ExecuteHedged(context.Background(), []Target{A, B, C}, RetryPolicy{MaxAttempts: 1}, nil,
-		time.Millisecond, func() bool { return true }, fn, nil)
+		5*time.Second, time.Millisecond, func() bool { return true }, fn, nil)
 	require.NoError(t, err)
 	require.Equal(t, "c", v)
 	require.Equal(t, C, res.Target)
@@ -83,7 +83,7 @@ func TestLoserSuccessIsDiscarded(t *testing.T) {
 		return "fast", nil
 	}
 	_, _, _, err := ExecuteHedged(context.Background(), []Target{A, B}, RetryPolicy{MaxAttempts: 1}, nil,
-		10*time.Millisecond, func() bool { return true }, fn, func(string) { discarded.Add(1) })
+		5*time.Second, 10*time.Millisecond, func() bool { return true }, fn, func(string) { discarded.Add(1) })
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return discarded.Load() == 1 }, time.Second, 5*time.Millisecond)
 }

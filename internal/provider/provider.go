@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
 )
@@ -28,10 +31,11 @@ type Stream interface {
 
 // Error is an upstream failure. Status 0 means a network error. Retryable drives the router.
 type Error struct {
-	Provider  string
-	Status    int
-	Message   string
-	Retryable bool
+	Provider   string
+	Status     int
+	Message    string
+	Retryable  bool
+	RetryAfter time.Duration
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("%s: %d %s", e.Provider, e.Status, e.Message) }
@@ -63,7 +67,17 @@ func FromHTTP(provider string, resp *http.Response) *Error {
 			msg = parsed.Message
 		}
 	}
-	return &Error{Provider: provider, Status: resp.StatusCode, Message: msg, Retryable: RetryableStatus(resp.StatusCode)}
+	var retryAfter time.Duration
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		if secs, err := strconv.Atoi(strings.TrimSpace(ra)); err == nil && secs >= 0 {
+			retryAfter = time.Duration(secs) * time.Second
+		} else if t, err := http.ParseTime(ra); err == nil {
+			if d := time.Until(t); d > 0 {
+				retryAfter = d
+			}
+		}
+	}
+	return &Error{Provider: provider, Status: resp.StatusCode, Message: msg, Retryable: RetryableStatus(resp.StatusCode), RetryAfter: retryAfter}
 }
 
 // netError marks transport failures (DNS, reset, timeout) as retryable, unless the caller cancelled.

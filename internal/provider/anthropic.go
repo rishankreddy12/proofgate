@@ -10,24 +10,31 @@ import (
 	"strings"
 
 	"github.com/proofgate/proofgate/internal/api"
+	"github.com/proofgate/proofgate/internal/httpx"
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
 type AnthropicConfig struct {
-	Name    string
-	BaseURL string // https://api.anthropic.com
-	APIKey  string
-	KeyFunc KeyFunc
+	Name             string
+	BaseURL          string // https://api.anthropic.com
+	APIKey           string
+	KeyFunc          KeyFunc
+	MaxResponseBytes int64
 }
 
 type Anthropic struct {
-	cfg    AnthropicConfig
-	client *http.Client
+	cfg              AnthropicConfig
+	client           *http.Client
+	maxResponseBytes int64
 }
 
 func NewAnthropic(cfg AnthropicConfig) *Anthropic {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	return &Anthropic{cfg: cfg, client: newClient()}
+	maxResp := cfg.MaxResponseBytes
+	if maxResp <= 0 {
+		maxResp = 32 << 20
+	}
+	return &Anthropic{cfg: cfg, client: newClient(), maxResponseBytes: maxResp}
 }
 
 func (p *Anthropic) Name() string { return p.cfg.Name }
@@ -244,7 +251,11 @@ func (p *Anthropic) Chat(ctx context.Context, model string, req *api.ChatRequest
 		Content    []aBlock `json:"content"`
 		Usage      aUsage   `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&ar); err != nil {
+	limited := httpx.LimitReader(resp.Body, p.maxResponseBytes)
+	if err := json.NewDecoder(limited).Decode(&ar); err != nil {
+		if errors.Is(err, httpx.ErrResponseTooLarge) {
+			return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "upstream response exceeded size limit", Retryable: false}
+		}
 		return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "bad JSON: " + err.Error(), Retryable: true}
 	}
 	msg := api.Message{Role: "assistant"}
@@ -274,7 +285,7 @@ func (p *Anthropic) ChatStream(ctx context.Context, model string, req *api.ChatR
 		cancel()
 		return nil, err
 	}
-	return &anthropicStream{name: p.cfg.Name, model: model, body: resp.Body, r: sse.NewReader(resp.Body),
+	return &anthropicStream{name: p.cfg.Name, model: model, body: resp.Body, r: sse.NewReaderWithLimit(resp.Body, int(p.maxResponseBytes)),
 		cancel: cancel, toolIndex: map[int]int{}}, nil
 }
 
@@ -324,6 +335,9 @@ func (s *anthropicStream) Recv() (*api.ChatChunk, error) {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil, io.EOF
+			}
+			if errors.Is(err, sse.ErrEventTooLarge) {
+				return nil, &Error{Provider: s.name, Status: 502, Message: "sse event exceeded max size", Retryable: false}
 			}
 			return nil, &Error{Provider: s.name, Message: "stream read: " + err.Error(), Retryable: true}
 		}

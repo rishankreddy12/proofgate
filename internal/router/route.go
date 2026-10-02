@@ -38,6 +38,8 @@ type Route struct {
 	Strategy          string
 	Retry             RetryPolicy
 	Timeout           time.Duration
+	Deadline          time.Duration
+	FirstTokenTimeout time.Duration
 	StreamIdleTimeout time.Duration
 	Embeddings        bool
 	Cache             config.CacheConfig
@@ -75,7 +77,15 @@ func New(cfg *config.Config, br *Breakers) *Router {
 		r.providers[p.Name] = true
 	}
 	for _, rc := range cfg.Routes {
-		rt := &Route{Name: rc.Name, Strategy: rc.Strategy, Timeout: rc.Timeout, StreamIdleTimeout: rc.StreamIdleTimeout,
+		deadline := rc.Deadline
+		if deadline <= 0 {
+			deadline = 90 * time.Second
+		}
+		ftt := rc.FirstTokenTimeout
+		if ftt <= 0 {
+			ftt = 15 * time.Second
+		}
+		rt := &Route{Name: rc.Name, Strategy: rc.Strategy, Timeout: rc.Timeout, Deadline: deadline, FirstTokenTimeout: ftt, StreamIdleTimeout: rc.StreamIdleTimeout,
 			Retry: RetryPolicy{MaxAttempts: rc.Retry.MaxAttempts, BaseDelay: rc.Retry.BaseDelay}, Embeddings: rc.Embeddings,
 			Cache: rc.Cache, Guard: rc.Guard, SmartRoute: rc.SmartRoute, Hedge: rc.Hedge}
 		for _, t := range rc.Targets {
@@ -104,6 +114,7 @@ func (r *Router) Resolve(model string, allowDirect bool) (*Route, error) {
 		}
 		return &Route{Name: model, Targets: []Target{t}, Strategy: "fallback",
 			Retry: RetryPolicy{MaxAttempts: 2, BaseDelay: 200 * time.Millisecond}, Timeout: 120 * time.Second,
+			Deadline: 90 * time.Second, FirstTokenTimeout: 15 * time.Second,
 			StreamIdleTimeout: 30 * time.Second, Embeddings: true}, nil
 	}
 	return nil, api.BadRequest(fmt.Sprintf("unknown route %q", model))

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,7 @@ func noSleep(t *testing.T) *[]time.Duration {
 func run(t *testing.T, results map[Target][]error) (Result, error, []Target) {
 	var calls []Target
 	br := NewBreakers(5, time.Minute, time.Now)
-	res, err := Execute(context.Background(), []Target{A, B}, RetryPolicy{MaxAttempts: 2, BaseDelay: 100 * time.Millisecond}, br,
+	res, err := Execute(context.Background(), []Target{A, B}, RetryPolicy{MaxAttempts: 2, BaseDelay: 100 * time.Millisecond}, br, 5*time.Second,
 		func(_ context.Context, tg Target) error {
 			calls = append(calls, tg)
 			q := results[tg]
@@ -96,7 +97,49 @@ func TestCancelledContextStops(t *testing.T) {
 	noSleep(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := Execute(ctx, []Target{A, B}, RetryPolicy{MaxAttempts: 2}, NewBreakers(5, time.Minute, time.Now),
+	_, err := Execute(ctx, []Target{A, B}, RetryPolicy{MaxAttempts: 2}, NewBreakers(5, time.Minute, time.Now), 5*time.Second,
 		func(ctx context.Context, _ Target) error { return ctx.Err() })
 	require.True(t, errors.Is(err, context.Canceled))
+}
+
+func TestDeadlineExceededReturnsGatewayTimeout(t *testing.T) {
+	noSleep(t)
+	slow := func(ctx context.Context, _ Target) error {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	_, err := Execute(context.Background(), []Target{A, B}, RetryPolicy{MaxAttempts: 1}, nil, 20*time.Millisecond, slow)
+	require.Error(t, err)
+	var ae *api.Error
+	require.True(t, errors.As(err, &ae), "expected api.Error, got %T: %v", err, err)
+	require.Equal(t, 504, ae.Status)
+	require.Equal(t, "gateway_timeout", ae.Code)
+}
+
+func TestRateLimitRetryAfterSkipsTargetAndPropagatesShortest(t *testing.T) {
+	noSleep(t)
+	now := time.Now()
+	br := NewBreakers(5, time.Minute, func() time.Time { return now })
+	pErrA := &provider.Error{Provider: "a", Status: 429, RetryAfter: 30 * time.Second}
+	pErrB := &provider.Error{Provider: "b", Status: 429, RetryAfter: 10 * time.Second}
+
+	res, err := Execute(context.Background(), []Target{A, B}, RetryPolicy{MaxAttempts: 1}, br, 5*time.Second,
+		func(_ context.Context, tg Target) error {
+			if tg == A {
+				return pErrA
+			}
+			return pErrB
+		})
+	require.Error(t, err)
+	require.False(t, br.Allow(A))
+	require.False(t, br.Allow(B))
+
+	var pe *provider.Error
+	require.True(t, errors.As(err, &pe))
+	require.Equal(t, 10*time.Second, pe.RetryAfter, "shortest retry-after should be propagated")
+	require.Equal(t, 2, res.Attempts)
 }

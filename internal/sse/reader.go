@@ -8,6 +8,16 @@ import (
 	"io"
 )
 
+var (
+	// ErrEventTooLarge is returned when an SSE event exceeds the maximum configured size limit.
+	ErrEventTooLarge = errors.New("sse: event exceeded maximum size")
+)
+
+const (
+	// DefaultMaxEventBytes is the default maximum size allowed for an individual SSE event (16MB).
+	DefaultMaxEventBytes = 16 * 1024 * 1024
+)
+
 type Event struct {
 	ID   string
 	Name string
@@ -15,11 +25,22 @@ type Event struct {
 }
 
 type Reader struct {
-	br *bufio.Reader
+	br            *bufio.Reader
+	maxEventBytes int
 }
 
 func NewReader(r io.Reader) *Reader {
-	return &Reader{br: bufio.NewReaderSize(r, 64*1024)}
+	return NewReaderWithLimit(r, DefaultMaxEventBytes)
+}
+
+func NewReaderWithLimit(r io.Reader, maxEventBytes int) *Reader {
+	if maxEventBytes <= 0 {
+		maxEventBytes = DefaultMaxEventBytes
+	}
+	return &Reader{
+		br:            bufio.NewReaderSize(r, 64*1024),
+		maxEventBytes: maxEventBytes,
+	}
 }
 
 // Next returns the next event. It returns io.EOF when the stream ends with no pending event.
@@ -27,6 +48,7 @@ func (r *Reader) Next() (Event, error) {
 	var ev Event
 	var data [][]byte
 	have := false
+	totalBytes := 0
 	for {
 		line, err := r.br.ReadBytes('\n')
 		if len(line) == 0 && err != nil {
@@ -35,6 +57,10 @@ func (r *Reader) Next() (Event, error) {
 				return ev, nil
 			}
 			return Event{}, err
+		}
+		totalBytes += len(line)
+		if r.maxEventBytes > 0 && totalBytes > r.maxEventBytes {
+			return Event{}, ErrEventTooLarge
 		}
 		line = bytes.TrimRight(line, "\r\n")
 		if len(line) == 0 {

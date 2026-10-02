@@ -11,24 +11,31 @@ import (
 	"strings"
 
 	"github.com/proofgate/proofgate/internal/api"
+	"github.com/proofgate/proofgate/internal/httpx"
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
 type GeminiConfig struct {
-	Name    string
-	BaseURL string // https://generativelanguage.googleapis.com
-	APIKey  string
-	KeyFunc KeyFunc
+	Name             string
+	BaseURL          string // https://generativelanguage.googleapis.com
+	APIKey           string
+	KeyFunc          KeyFunc
+	MaxResponseBytes int64
 }
 
 type Gemini struct {
-	cfg    GeminiConfig
-	client *http.Client
+	cfg              GeminiConfig
+	client           *http.Client
+	maxResponseBytes int64
 }
 
 func NewGemini(cfg GeminiConfig) *Gemini {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	return &Gemini{cfg: cfg, client: newClient()}
+	maxResp := cfg.MaxResponseBytes
+	if maxResp <= 0 {
+		maxResp = 32 << 20
+	}
+	return &Gemini{cfg: cfg, client: newClient(), maxResponseBytes: maxResp}
 }
 
 func (p *Gemini) Name() string { return p.cfg.Name }
@@ -262,7 +269,11 @@ func (p *Gemini) Chat(ctx context.Context, model string, req *api.ChatRequest) (
 	}
 	defer resp.Body.Close()
 	var gr gResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
+	limited := httpx.LimitReader(resp.Body, p.maxResponseBytes)
+	if err := json.NewDecoder(limited).Decode(&gr); err != nil {
+		if errors.Is(err, httpx.ErrResponseTooLarge) {
+			return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "upstream response exceeded size limit", Retryable: false}
+		}
 		return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "bad JSON: " + err.Error(), Retryable: true}
 	}
 	msg := api.Message{Role: "assistant"}
@@ -299,7 +310,7 @@ func (p *Gemini) ChatStream(ctx context.Context, model string, req *api.ChatRequ
 		cancel()
 		return nil, err
 	}
-	return &geminiStream{name: p.cfg.Name, model: model, body: resp.Body, r: sse.NewReader(resp.Body), cancel: cancel}, nil
+	return &geminiStream{name: p.cfg.Name, model: model, body: resp.Body, r: sse.NewReaderWithLimit(resp.Body, int(p.maxResponseBytes)), cancel: cancel}, nil
 }
 
 type geminiStream struct {
@@ -323,6 +334,9 @@ func (s *geminiStream) Recv() (*api.ChatChunk, error) {
 					return &api.ChatChunk{Object: "chat.completion.chunk", Model: s.model, Choices: []api.ChunkChoice{}, Usage: s.usage}, nil
 				}
 				return nil, io.EOF
+			}
+			if errors.Is(err, sse.ErrEventTooLarge) {
+				return nil, &Error{Provider: s.name, Status: 502, Message: "sse event exceeded max size", Retryable: false}
 			}
 			return nil, &Error{Provider: s.name, Message: "stream read: " + err.Error(), Retryable: true}
 		}
@@ -389,7 +403,11 @@ func (p *Gemini) Embed(ctx context.Context, model string, req *api.EmbeddingRequ
 			Values []float32 `json:"values"`
 		} `json:"embeddings"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
+	limited := httpx.LimitReader(resp.Body, p.maxResponseBytes)
+	if err := json.NewDecoder(limited).Decode(&gr); err != nil {
+		if errors.Is(err, httpx.ErrResponseTooLarge) {
+			return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "upstream response exceeded size limit", Retryable: false}
+		}
 		return nil, &Error{Provider: p.cfg.Name, Status: 502, Message: "bad JSON: " + err.Error(), Retryable: true}
 	}
 	out := &api.EmbeddingResponse{Object: "list", Model: model}
