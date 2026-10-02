@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/proofgate/proofgate/internal/adminauth"
+	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/secrets"
@@ -234,6 +235,30 @@ func main() {
 			die("update: %v", err)
 		}
 		fmt.Println("updated")
+	case "tenant purge-data":
+		targetID := *name
+		if targetID == "" && len(fs.Args()) > 0 {
+			targetID = fs.Args()[0]
+		}
+		if targetID == "" {
+			die("usage: proofgatectl tenant purge-data <id|--name <name>>")
+		}
+		if t, err := st.TenantByName(ctx, targetID); err == nil {
+			targetID = t.ID
+		}
+		chDSN := os.Getenv("CLICKHOUSE_DSN")
+		if chDSN == "" {
+			die("CLICKHOUSE_DSN not set")
+		}
+		chConn, err := analytics.Open(ctx, chDSN)
+		if err != nil {
+			die("open clickhouse: %v", err)
+		}
+		defer chConn.Close()
+		if err := analytics.PurgeTenantData(ctx, chConn, targetID); err != nil {
+			die("purge tenant data: %v", err)
+		}
+		fmt.Printf("purged analytics data for tenant %s\n", targetID)
 	case "key create":
 		t, err := st.TenantByName(ctx, *tenant)
 		if err != nil {

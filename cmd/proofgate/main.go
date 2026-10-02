@@ -146,6 +146,9 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	if err := analytics.Migrate(ctx, chConn); err != nil {
 		return err
 	}
+	if err := analytics.ApplyRetention(ctx, chConn, cfg.Analytics.TextTTLHours, cfg.Analytics.TTLDays); err != nil {
+		slog.Warn("apply clickhouse retention failed", "err", err)
+	}
 	metrics := telemetry.NewMetrics()
 	usageDropped := metrics.Counter("proofgate_analytics_dropped_total", "Analytics rows dropped because the queue was full.", "table")
 	usage := analytics.NewBatcher("usage_events", cfg.Analytics.UsageBatcher.Capacity, cfg.Analytics.UsageBatcher.BatchSize, cfg.Analytics.UsageBatcher.FlushInterval, analytics.InsertUsage(chConn),
@@ -360,7 +363,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	leader := proof.NewLeader(rdb, instanceID, "proofgate:leader:monitor", 30*time.Second, 10*time.Second)
 	leader.Start(ctx)
 
-	chClient := proof.NewCH(chConn)
+	chClient := proof.NewCHWithStoreText(chConn, cfg.Analytics.StoreText)
 	go proof.RunMonitor(ctx, leader, cfg.Proof.MonitorInterval, func(runCtx context.Context) error {
 		rt := state.Load()
 		if rt != nil && rt.Config != nil {

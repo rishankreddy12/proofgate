@@ -3,6 +3,9 @@ package proof
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -47,9 +50,34 @@ type LabeledPoint struct {
 	Rater      string
 }
 
-type CH struct{ conn driver.Conn }
+type CH struct {
+	conn      driver.Conn
+	storeText string
+}
 
-func NewCH(conn driver.Conn) *CH { return &CH{conn: conn} }
+func NewCH(conn driver.Conn) *CH { return NewCHWithStoreText(conn, "full") }
+
+func NewCHWithStoreText(conn driver.Conn, storeText string) *CH {
+	if storeText == "" {
+		storeText = "hash"
+	}
+	return &CH{conn: conn, storeText: strings.ToLower(storeText)}
+}
+
+func processText(text, mode string) string {
+	if text == "" {
+		return ""
+	}
+	switch mode {
+	case "none":
+		return ""
+	case "hash":
+		h := sha256.Sum256([]byte(text))
+		return "sha256:" + hex.EncodeToString(h[:])
+	default:
+		return text
+	}
+}
 
 func u8(b bool) uint8 {
 	if b {
@@ -74,8 +102,12 @@ func (c *CH) insert(ctx context.Context, table string, n int, row func(i int) []
 func (c *CH) InsertShadow(ctx context.Context, rs []ShadowRecord) error {
 	return c.insert(ctx, "cache_shadow", len(rs), func(i int) []any {
 		r := rs[i]
-		return []any{r.ID, r.TS, r.TenantID, r.Route, float32(r.Threshold), float32(r.Similarity), r.Query,
-			r.CandidateQuery, r.CandidateAnswer, r.ActualAnswer, r.CandidateSource}
+		q := processText(r.Query, c.storeText)
+		cq := processText(r.CandidateQuery, c.storeText)
+		ca := processText(r.CandidateAnswer, c.storeText)
+		aa := processText(r.ActualAnswer, c.storeText)
+		return []any{r.ID, r.TS, r.TenantID, r.Route, float32(r.Threshold), float32(r.Similarity), q,
+			cq, ca, aa, r.CandidateSource}
 	})
 }
 
@@ -89,8 +121,11 @@ func (c *CH) InsertLabels(ctx context.Context, ls []CacheLabel) error {
 func (c *CH) InsertRoutingShadow(ctx context.Context, rs []RoutingShadow) error {
 	return c.insert(ctx, "routing_shadow", len(rs), func(i int) []any {
 		r := rs[i]
-		return []any{r.ID, r.TS, r.TenantID, r.Route, r.Decision, r.CheapTarget, r.StrongTarget, r.Prompt,
-			r.CheapAnswer, r.StrongAnswer, float32(r.CheapScore), float32(r.StrongScore), r.JudgeModel, r.JudgePromptVersion}
+		prompt := processText(r.Prompt, c.storeText)
+		cheapAns := processText(r.CheapAnswer, c.storeText)
+		strongAns := processText(r.StrongAnswer, c.storeText)
+		return []any{r.ID, r.TS, r.TenantID, r.Route, r.Decision, r.CheapTarget, r.StrongTarget, prompt,
+			cheapAns, strongAns, float32(r.CheapScore), float32(r.StrongScore), r.JudgeModel, r.JudgePromptVersion}
 	})
 }
 

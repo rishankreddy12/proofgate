@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -49,6 +50,65 @@ func Migrate(ctx context.Context, conn driver.Conn) error {
 			if err := conn.Exec(ctx, stmt); err != nil {
 				return fmt.Errorf("clickhouse migration %s: %w", n, err)
 			}
+		}
+	}
+	return nil
+}
+
+// ApplyRetention modifies column TTLs on text columns and row TTLs on shadow tables based on configuration.
+func ApplyRetention(ctx context.Context, conn driver.Conn, textTTLHours, ttlDays int) error {
+	if conn == nil {
+		return nil
+	}
+	if textTTLHours <= 0 {
+		textTTLHours = 72
+	}
+	if ttlDays <= 0 {
+		ttlDays = 30
+	}
+
+	stmts := []string{
+		fmt.Sprintf("ALTER TABLE cache_shadow MODIFY COLUMN query String TTL toDateTime(ts) + INTERVAL %d HOUR", textTTLHours),
+		fmt.Sprintf("ALTER TABLE cache_shadow MODIFY COLUMN candidate_query String TTL toDateTime(ts) + INTERVAL %d HOUR", textTTLHours),
+		fmt.Sprintf("ALTER TABLE cache_shadow MODIFY COLUMN candidate_answer String TTL toDateTime(ts) + INTERVAL %d HOUR", textTTLHours),
+		fmt.Sprintf("ALTER TABLE cache_shadow MODIFY COLUMN actual_answer String TTL toDateTime(ts) + INTERVAL %d HOUR", textTTLHours),
+		fmt.Sprintf("ALTER TABLE cache_shadow MODIFY TTL toDateTime(ts) + INTERVAL %d DAY", ttlDays),
+
+		fmt.Sprintf("ALTER TABLE routing_shadow MODIFY COLUMN prompt String TTL toDateTime(ts) + INTERVAL %d HOUR", textTTLHours),
+		fmt.Sprintf("ALTER TABLE routing_shadow MODIFY COLUMN cheap_answer String TTL toDateTime(ts) + INTERVAL %d HOUR", textTTLHours),
+		fmt.Sprintf("ALTER TABLE routing_shadow MODIFY COLUMN strong_answer String TTL toDateTime(ts) + INTERVAL %d HOUR", textTTLHours),
+		fmt.Sprintf("ALTER TABLE routing_shadow MODIFY TTL toDateTime(ts) + INTERVAL %d DAY", ttlDays),
+	}
+
+	for _, stmt := range stmts {
+		if err := conn.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("apply retention %q: %w", stmt, err)
+		}
+	}
+	return nil
+}
+
+// PurgeTenantData purges all analytics and shadow data for the specified tenant from ClickHouse.
+func PurgeTenantData(ctx context.Context, conn driver.Conn, tenantID string) error {
+	if tenantID == "" {
+		return errors.New("tenant id required")
+	}
+	if conn == nil {
+		return nil
+	}
+
+	tables := []string{
+		"usage_events",
+		"cache_shadow",
+		"routing_shadow",
+		"routing_decisions",
+		"mcp_calls",
+	}
+
+	for _, tbl := range tables {
+		query := fmt.Sprintf("ALTER TABLE %s DELETE WHERE tenant_id = ?", tbl)
+		if err := conn.Exec(ctx, query, tenantID); err != nil {
+			return fmt.Errorf("purge table %s for tenant %s: %w", tbl, tenantID, err)
 		}
 	}
 	return nil

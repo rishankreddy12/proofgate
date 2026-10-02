@@ -117,6 +117,9 @@ Configures ClickHouse telemetry ingestion and asynchronous event batching queues
 | `batch_size` | integer | `5000` / `2000` | Number of events buffered before triggering a bulk insert. |
 | `flush_interval` | duration | `1s` | Maximum time to wait before flushing pending records. |
 | `flush_timeout` | duration | `10s` | Maximum time allowed to flush pending analytics during gateway shutdown. |
+| `text_ttl_hours` | integer | `72` | Column TTL in hours for text fields (`query`, `prompt`, candidate/actual answers) in ClickHouse shadow tables. Overridable via `PROOFGATE_ANALYTICS_TEXT_TTL_HOURS`. |
+| `ttl_days` | integer | `30` | Row TTL in days for shadow evaluation rows in ClickHouse. Overridable via `PROOFGATE_ANALYTICS_TTL_DAYS`. |
+| `store_text` | string | `"hash"` | Privacy policy for prompt/answer text stored in analytics: `full` (store complete text), `hash` (SHA-256 digest `sha256:...`), or `none` (omit text entirely). Overridable via `PROOFGATE_ANALYTICS_STORE_TEXT`. |
 
 ```yaml
 analytics:

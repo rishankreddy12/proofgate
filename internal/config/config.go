@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,9 @@ type AnalyticsConfig struct {
 	UsageBatcher  BatcherConfig `yaml:"usage_batcher"`
 	MCPBatcher    BatcherConfig `yaml:"mcp_batcher"`
 	FlushTimeout  time.Duration `yaml:"flush_timeout"`
+	TextTTLHours  int           `yaml:"text_ttl_hours"`
+	TTLDays       int           `yaml:"ttl_days"`
+	StoreText     string        `yaml:"store_text"`
 }
 
 type TelemetryConfig struct {
@@ -368,6 +372,19 @@ func (c *Config) applyEnvOverrides() {
 	if env := os.Getenv("CLICKHOUSE_DSN"); env != "" && c.Analytics.ClickHouseDSN == "" {
 		c.Analytics.ClickHouseDSN = env
 	}
+	if env := os.Getenv("PROOFGATE_ANALYTICS_STORE_TEXT"); env != "" {
+		c.Analytics.StoreText = env
+	}
+	if env := os.Getenv("PROOFGATE_ANALYTICS_TEXT_TTL_HOURS"); env != "" {
+		if n, err := strconv.Atoi(env); err == nil {
+			c.Analytics.TextTTLHours = n
+		}
+	}
+	if env := os.Getenv("PROOFGATE_ANALYTICS_TTL_DAYS"); env != "" {
+		if n, err := strconv.Atoi(env); err == nil {
+			c.Analytics.TTLDays = n
+		}
+	}
 	if env := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); env != "" && c.Telemetry.OTLPEndpoint == "" {
 		c.Telemetry.OTLPEndpoint = env
 	}
@@ -445,6 +462,15 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Analytics.FlushTimeout == 0 {
 		c.Analytics.FlushTimeout = 10 * time.Second
+	}
+	if c.Analytics.TextTTLHours == 0 {
+		c.Analytics.TextTTLHours = 72
+	}
+	if c.Analytics.TTLDays == 0 {
+		c.Analytics.TTLDays = 30
+	}
+	if c.Analytics.StoreText == "" {
+		c.Analytics.StoreText = "hash"
 	}
 	if c.Telemetry.ServiceName == "" {
 		c.Telemetry.ServiceName = "proofgate"
@@ -647,6 +673,15 @@ func (c *Config) validate() error {
 	}
 	if c.Analytics.FlushTimeout < 0 {
 		errs = append(errs, errors.New("analytics.flush_timeout must be >= 0"))
+	}
+	if c.Analytics.TextTTLHours < 0 {
+		errs = append(errs, errors.New("analytics.text_ttl_hours must be >= 0"))
+	}
+	if c.Analytics.TTLDays < 0 {
+		errs = append(errs, errors.New("analytics.ttl_days must be >= 0"))
+	}
+	if c.Analytics.StoreText != "" && c.Analytics.StoreText != "full" && c.Analytics.StoreText != "hash" && c.Analytics.StoreText != "none" {
+		errs = append(errs, fmt.Errorf("analytics.store_text must be one of: full, hash, none (got %q)", c.Analytics.StoreText))
 	}
 	if c.Breakers.Threshold < 0 {
 		errs = append(errs, errors.New("breakers.threshold must be >= 0"))

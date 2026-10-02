@@ -12,6 +12,7 @@ Welcome to the comprehensive documentation for **ProofGate** — the enterprise 
 - **[Portability & No-Lock-In Guide](portability.md)**: Details on open standards (OpenAI API, OpenTelemetry), customer data ownership, and migration guides.
 - **[Autonomous Agent Governance & MCP Proxy](agents.md)**: Loop detection, per-run token and cost budgets, and secure Model Context Protocol reverse proxying.
 - **[STRIDE Threat Model & Security Controls](threat-model.md)**: Comprehensive machine-checked security architecture with analysis of the March 2026 LiteLLM PyPI compromise.
+- **[Data Retention, Privacy & Erasure Policy](privacy_and_retention.md)**: ClickHouse column TTLs, prompt anonymization modes (`store_text`), and tenant erasure via `proofgatectl tenant purge-data`.
 
 ---
 
