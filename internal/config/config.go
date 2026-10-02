@@ -146,8 +146,8 @@ type SecretsConfig struct {
 	VaultAuth      string                   `yaml:"vault_auth"`     // "token" (VAULT_TOKEN env) | "kubernetes"
 	VaultRole      string                   `yaml:"vault_role"`
 	VaultTokenFile string                   `yaml:"vault_token_file"`
-	CacheTTL       time.Duration            `yaml:"cache_ttl"`      // default 60s
-	TenantKEKs     map[string]SecretsConfig `yaml:"tenant_keks"`
+	CacheTTL       time.Duration   `yaml:"cache_ttl"`      // default 60s
+	PreviousKEKs   []SecretsConfig `yaml:"previous_keks"`
 }
 
 type Price struct {

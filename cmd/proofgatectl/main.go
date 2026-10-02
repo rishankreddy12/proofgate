@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/proofgate/proofgate/internal/adminauth"
 	"github.com/proofgate/proofgate/internal/auth"
@@ -83,6 +84,9 @@ func main() {
 		return
 	case "chat":
 		runChat(ctx, gf, cmdArgs[1:])
+		return
+	case "admin":
+		runAdmin(ctx, gf, cmdArgs[1:])
 		return
 	case "export":
 		if len(cmdArgs) > 1 && cmdArgs[1] == "config" {
@@ -185,13 +189,19 @@ func main() {
 		return
 	}
 
+	if cmdArgs[0] == "secrets" {
+		runSecrets(ctx, st, cmdArgs[1:])
+		return
+	}
+
 	if len(cmdArgs) < 2 {
-		die("usage: proofgatectl <tenant|key|label|provider-key|kek|export|bootstrap-admin> <command> [flags]")
+		die("usage: proofgatectl <tenant|key|label|provider-key|secrets|kek|export|bootstrap-admin> <command> [flags]")
 	}
 
 	fs := flag.NewFlagSet(cmdArgs[0]+" "+cmdArgs[1], flag.ExitOnError)
 	name := fs.String("name", "", "tenant or key name")
 	tenant := fs.String("tenant", "", "tenant name")
+	keyVal := fs.String("key", "", "raw API key to verify")
 	rpm := fs.Int("rpm", 0, "requests per minute (0 = unlimited)")
 	tpm := fs.Int("tpm", 0, "tokens per minute (0 = unlimited)")
 	budget := fs.Float64("budget-usd", 0, "monthly budget in USD (0 = unlimited)")
@@ -284,6 +294,19 @@ func main() {
 			die("revoke: %v", err)
 		}
 		fmt.Println("revoked (cached copies expire within 30s)")
+	case "key verify":
+		if *keyVal == "" {
+			die("--key is required")
+		}
+		h := auth.HashKey(*keyVal)
+		krec, err := st.KeyByHash(ctx, h)
+		if err != nil {
+			die("invalid: %v", err)
+		}
+		if krec.Key.RevokedAt != nil {
+			die("invalid: key revoked at %s", krec.Key.RevokedAt.Format(time.RFC3339))
+		}
+		fmt.Printf("valid key id=%s tenant_id=%s\n", krec.Key.ID, krec.Tenant.ID)
 	default:
 		die("unknown command %q", cmdArgs[0]+" "+cmdArgs[1])
 	}

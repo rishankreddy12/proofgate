@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/signal"
 	"reflect"
@@ -27,6 +28,7 @@ import (
 	"github.com/proofgate/proofgate/internal/budget"
 	"github.com/proofgate/proofgate/internal/cache"
 	"github.com/proofgate/proofgate/internal/config"
+	"github.com/proofgate/proofgate/internal/control"
 	"github.com/proofgate/proofgate/internal/health"
 	"github.com/proofgate/proofgate/internal/mcpproxy"
 	"github.com/proofgate/proofgate/internal/proof"
@@ -154,15 +156,18 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	if err != nil && needsDBKeys(cfg) {
 		return err
 	}
-	if kek != nil && len(cfg.Secrets.TenantKEKs) > 0 {
-		tenantKEKs := make(map[string]secrets.KEK, len(cfg.Secrets.TenantKEKs))
-		for tid, tcfg := range cfg.Secrets.TenantKEKs {
-			tkek, terr := secrets.FromConfigWithOptions(tcfg.KEK, tcfg.LocalKEKFile, tcfg.VaultAddr, tcfg.VaultKey, tcfg.VaultAuth, tcfg.VaultRole, tcfg.VaultTokenFile)
-			if terr == nil && tkek != nil {
-				tenantKEKs[tid] = tkek
+	if kek != nil && len(cfg.Secrets.PreviousKEKs) > 0 {
+		var prevKEKs []secrets.KEK
+		for _, pcfg := range cfg.Secrets.PreviousKEKs {
+			pkek, perr := secrets.FromConfigWithOptions(pcfg.KEK, pcfg.LocalKEKFile, pcfg.VaultAddr, pcfg.VaultKey, pcfg.VaultAuth, pcfg.VaultRole, pcfg.VaultTokenFile)
+			if perr != nil {
+				return fmt.Errorf("initialize previous rotation KEK: %w", perr)
+			}
+			if pkek != nil {
+				prevKEKs = append(prevKEKs, pkek)
 			}
 		}
-		kek = secrets.NewMultiKEK(kek, tenantKEKs)
+		kek = secrets.NewMultiKEK(kek, prevKEKs...)
 	}
 	var keyCache *secrets.KeyCache
 	if kek != nil {
@@ -348,6 +353,43 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		return nil
 	})
 
+	ctrlBus := control.NewBus(rdb, instanceID, control.DefaultChannel)
+	ctrlBus.Subscribe(control.OpPurgeSecrets, func(c context.Context, msg control.Message) error {
+		if msg.Sender == instanceID {
+			return nil
+		}
+		if keyCache != nil {
+			keyCache.Purge()
+		}
+		return nil
+	})
+	ctrlBus.Subscribe(control.OpPurgeCache, func(c context.Context, msg control.Message) error {
+		if msg.Sender == instanceID {
+			return nil
+		}
+		req, _ := http.NewRequestWithContext(c, "POST", "/admin/cache/purge", nil)
+		rec := httptest.NewRecorder()
+		server.AdminCachePurgeHandler(rdb)(rec, req)
+		return nil
+	})
+	ctrlBus.Subscribe(control.OpReload, func(c context.Context, msg control.Message) error {
+		if msg.Sender == instanceID {
+			return nil
+		}
+		return watcher.Reload()
+	})
+	ctrlBus.Subscribe(control.OpKeyRevoked, func(c context.Context, msg control.Message) error {
+		if h, ok := msg.Args["key_hash"]; ok && h != "" {
+			authMW.EvictKey(h)
+		}
+		return nil
+	})
+	go func() {
+		if err := ctrlBus.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("control bus error", "err", err)
+		}
+	}()
+
 	// Refuse unsafe config at startup: non-loopback admin_addr requires admin_auth.enabled
 	if !config.IsLoopbackAddr(cfg.Server.AdminAddr) && !cfg.AdminAuth.Enabled {
 		if os.Getenv("PROOFGATE_ALLOW_UNAUTH_ADMIN") != "1" {
@@ -419,6 +461,9 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 			if keyCache != nil {
 				keyCache.Purge()
 			}
+		},
+		PublishControl: func(c context.Context, op string, args map[string]string) error {
+			return ctrlBus.Publish(c, op, args)
 		},
 		KEK:         kek,
 		KeyCache:    keyCache,

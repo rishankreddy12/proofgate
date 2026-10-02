@@ -6,29 +6,27 @@ import (
 	"sync"
 )
 
-// MultiKEK manages a default KEK along with per-tenant BYOK (Bring Your Own Key) KEKs.
-// It implements KEK, KEKResolver, and provides tenant-scoped encryption operations.
+// MultiKEK manages the current default KEK and historical KEKs for rotation.
+// It implements KEK, KEKResolver, encrypting with the default KEK and decrypting
+// with whichever KEK matches the sealed credential's KEK ID.
 type MultiKEK struct {
 	mu         sync.RWMutex
 	defaultKEK KEK
-	tenants    map[string]KEK // tenantID -> KEK
 	byID       map[string]KEK // kekID -> KEK
 }
 
-// NewMultiKEK initializes a MultiKEK with a default KEK and optional tenant KEKs.
-func NewMultiKEK(defaultKEK KEK, tenants map[string]KEK) *MultiKEK {
+// NewMultiKEK initializes a MultiKEK with a current default KEK and optional previous KEKs.
+func NewMultiKEK(defaultKEK KEK, previousKEKs ...KEK) *MultiKEK {
 	m := &MultiKEK{
 		defaultKEK: defaultKEK,
-		tenants:    map[string]KEK{},
-		byID:       map[string]KEK{},
+		byID:       make(map[string]KEK),
 	}
 	if defaultKEK != nil {
 		m.byID[defaultKEK.ID()] = defaultKEK
 	}
-	for tenantID, kek := range tenants {
-		if kek != nil {
-			m.tenants[tenantID] = kek
-			m.byID[kek.ID()] = kek
+	for _, k := range previousKEKs {
+		if k != nil {
+			m.byID[k.ID()] = k
 		}
 	}
 	return m
@@ -39,6 +37,10 @@ func (m *MultiKEK) ID() string {
 		return m.defaultKEK.ID()
 	}
 	return "multi-kek"
+}
+
+func (m *MultiKEK) DefaultKEK() KEK {
+	return m.defaultKEK
 }
 
 func (m *MultiKEK) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
@@ -55,7 +57,7 @@ func (m *MultiKEK) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
 	return m.defaultKEK.Unwrap(ctx, wrapped)
 }
 
-// ResolveKEK implements KEKResolver by looking up any registered KEK (default or tenant-specific) by ID.
+// ResolveKEK implements KEKResolver by looking up any registered KEK (default or previous) by ID.
 func (m *MultiKEK) ResolveKEK(id string) (KEK, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -63,29 +65,12 @@ func (m *MultiKEK) ResolveKEK(id string) (KEK, bool) {
 	return k, ok
 }
 
-// ForTenant returns the dedicated KEK for a tenant, or the default KEK if none was configured.
-func (m *MultiKEK) ForTenant(tenantID string) KEK {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if k, ok := m.tenants[tenantID]; ok {
-		return k
+// RegisterKEK adds an older or alternative KEK for resolution during rotation.
+func (m *MultiKEK) RegisterKEK(k KEK) {
+	if k == nil {
+		return
 	}
-	return m.defaultKEK
-}
-
-// RegisterTenant registers or updates a tenant-specific BYOK KEK.
-func (m *MultiKEK) RegisterTenant(tenantID string, kek KEK) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.tenants[tenantID] = kek
-	m.byID[kek.ID()] = kek
-}
-
-// SealForTenant seals plaintext using the specified tenant's dedicated KEK.
-func (m *MultiKEK) SealForTenant(ctx context.Context, tenantID string, plaintext, aad []byte) (Sealed, error) {
-	k := m.ForTenant(tenantID)
-	if k == nil {
-		return Sealed{}, fmt.Errorf("no KEK available for tenant %q", tenantID)
-	}
-	return Seal(ctx, k, plaintext, aad)
+	m.byID[k.ID()] = k
 }

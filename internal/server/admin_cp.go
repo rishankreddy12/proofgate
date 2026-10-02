@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ type ControlPlaneStore interface {
 	ActiveCredential(ctx context.Context, provider string) (secrets.Sealed, int, error)
 	PutCredential(ctx context.Context, provider string, sealed secrets.Sealed, actor string) (int, error)
 	ListCredentials(ctx context.Context) ([]store.CredentialInfo, error)
+	ListAdminAuditFiltered(ctx context.Context, filter store.AdminAuditFilter) ([]store.AdminAuditEvent, error)
 }
 
 type ControlPlaneDeps struct {
@@ -43,6 +45,7 @@ type ControlPlaneDeps struct {
 	ReloadFunc     func() error
 	PurgeCache     http.HandlerFunc
 	PurgeSecrets   func()
+	PublishControl func(ctx context.Context, op string, args map[string]string) error
 	KEK            secrets.KEK
 	KeyCache       *secrets.KeyCache
 	HealthAdmin    http.HandlerFunc
@@ -141,6 +144,9 @@ func (deps *ControlPlaneDeps) handleReloadConfig(w http.ResponseWriter, r *http.
 		if aerr := deps.Store.RecordAdminAudit(r.Context(), sess.Username, "config.reload", "", nil, ip, "ok"); aerr != nil && deps.Metrics != nil {
 			deps.Metrics.AdminAuditFailures.Inc()
 		}
+	}
+	if deps.PublishControl != nil {
+		_ = deps.PublishControl(r.Context(), "reload", nil)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -668,24 +674,77 @@ func (deps *ControlPlaneDeps) handleCachePurge(w http.ResponseWriter, r *http.Re
 			deps.Metrics.AdminAuditFailures.Inc()
 		}
 	}
+	if deps.PublishControl != nil {
+		_ = deps.PublishControl(r.Context(), "purge_cache", nil)
+	}
+}
+
+func (deps *ControlPlaneDeps) handleListAudit(w http.ResponseWriter, r *http.Request) {
+	if deps.Store == nil {
+		writeJSON(w, http.StatusOK, []store.AdminAuditEvent{})
+		return
+	}
+
+	q := r.URL.Query()
+	var filter store.AdminAuditFilter
+
+	if sinceStr := q.Get("since"); sinceStr != "" {
+		if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
+			filter.Since = t
+		}
+	}
+	filter.Actor = q.Get("actor")
+	filter.Action = q.Get("action")
+	if limitStr := q.Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil {
+			filter.Limit = l
+		}
+	}
+
+	events, err := deps.Store.ListAdminAuditFiltered(r.Context(), filter)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "audit_error", "message": err.Error()})
+		return
+	}
+	if events == nil {
+		events = []store.AdminAuditEvent{}
+	}
+	writeJSON(w, http.StatusOK, events)
 }
 
 // RegisterAdminRoutes binds all administrative and control-plane routes to the provided ServeMux.
 func RegisterAdminRoutes(admin *http.ServeMux, deps *ControlPlaneDeps, authEnabled bool) {
 	if !authEnabled {
 		// Backward-compatible unauthenticated registration
-		admin.HandleFunc("GET /admin/health", deps.HealthAdmin)
-		admin.HandleFunc("POST /admin/cache/purge", deps.PurgeCache)
-		admin.HandleFunc("POST /admin/secrets/purge", func(w http.ResponseWriter, _ *http.Request) {
+		if deps.HealthAdmin != nil {
+			admin.HandleFunc("GET /admin/health", deps.HealthAdmin)
+		}
+		if deps.PurgeCache != nil {
+			admin.HandleFunc("POST /admin/cache/purge", func(w http.ResponseWriter, r *http.Request) {
+				deps.PurgeCache(w, r)
+				if deps.PublishControl != nil {
+					_ = deps.PublishControl(r.Context(), "purge_cache", nil)
+				}
+			})
+		}
+		admin.HandleFunc("POST /admin/secrets/purge", func(w http.ResponseWriter, r *http.Request) {
 			if deps.PurgeSecrets != nil {
 				deps.PurgeSecrets()
 			}
+			if deps.PublishControl != nil {
+				_ = deps.PublishControl(r.Context(), "purge_secrets", nil)
+			}
 			w.WriteHeader(http.StatusOK)
 		})
-		admin.HandleFunc("POST /admin/reload", func(w http.ResponseWriter, _ *http.Request) {
-			if err := deps.ReloadFunc(); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
+		admin.HandleFunc("POST /admin/reload", func(w http.ResponseWriter, r *http.Request) {
+			if deps.ReloadFunc != nil {
+				if err := deps.ReloadFunc(); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+			if deps.PublishControl != nil {
+				_ = deps.PublishControl(r.Context(), "reload", nil)
 			}
 			w.WriteHeader(http.StatusNoContent)
 		})
@@ -696,7 +755,9 @@ func RegisterAdminRoutes(admin *http.ServeMux, deps *ControlPlaneDeps, authEnabl
 	admin.HandleFunc("POST /admin/auth/login", deps.handleLogin)
 
 	// 2. Unauthenticated monitoring endpoints (as required by Section 16 & 27)
-	admin.HandleFunc("GET /admin/health", deps.HealthAdmin)
+	if deps.HealthAdmin != nil {
+		admin.HandleFunc("GET /admin/health", deps.HealthAdmin)
+	}
 
 	// Middleware wrappers
 	wrapAuth := func(h http.HandlerFunc) http.Handler {
@@ -716,6 +777,7 @@ func RegisterAdminRoutes(admin *http.ServeMux, deps *ControlPlaneDeps, authEnabl
 	admin.Handle("GET /admin/cp/config", wrapPerm(adminauth.PermConfigView, deps.handleGetConfig))
 	admin.Handle("POST /admin/cp/config/reload", wrapPerm(adminauth.PermConfigReload, deps.handleReloadConfig))
 	admin.Handle("POST /admin/cp/cache/purge", wrapPerm(adminauth.PermCachePurge, deps.handleCachePurge))
+	admin.Handle("GET /admin/cp/audit", wrapPerm(adminauth.PermAuditView, deps.handleListAudit))
 
 	// Providers
 	admin.Handle("GET /admin/cp/providers", wrapPerm(adminauth.PermConfigView, deps.handleListProviders))
@@ -739,9 +801,12 @@ func RegisterAdminRoutes(admin *http.ServeMux, deps *ControlPlaneDeps, authEnabl
 
 	// 5. Existing operational endpoints authenticated when admin_auth is enabled
 	admin.Handle("POST /admin/cache/purge", wrapPerm(adminauth.PermCachePurge, deps.handleCachePurge))
-	admin.Handle("POST /admin/secrets/purge", wrapPerm(adminauth.PermProviderManage, func(w http.ResponseWriter, _ *http.Request) {
+	admin.Handle("POST /admin/secrets/purge", wrapPerm(adminauth.PermProviderManage, func(w http.ResponseWriter, r *http.Request) {
 		if deps.PurgeSecrets != nil {
 			deps.PurgeSecrets()
+		}
+		if deps.PublishControl != nil {
+			_ = deps.PublishControl(r.Context(), "purge_secrets", nil)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))

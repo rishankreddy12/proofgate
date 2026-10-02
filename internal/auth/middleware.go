@@ -211,3 +211,15 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})
 }
+
+// EvictKey removes the given key hash from both positive and negative auth caches.
+func (m *Middleware) EvictKey(keyHash string) {
+	m.posCache.Remove(keyHash)
+	m.negCache.Remove(keyHash)
+}
+
+// Purge evicts all entries from both positive and negative auth caches.
+func (m *Middleware) Purge() {
+	m.posCache.Purge()
+	m.negCache.Purge()
+}

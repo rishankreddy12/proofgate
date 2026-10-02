@@ -78,11 +78,11 @@ Read the full methodology and same-harness comparison with LiteLLM and Bifrost i
 
 ### 3. Zero-Trust Security & Supply-Chain Hardening
 - **Envelope Encryption**: Provider API keys sealed in PostgreSQL with AES-256-GCM per-record data keys, wrapped with local KEK or HashiCorp Vault Transit.
-- **Bounded In-Memory Cache**: Decrypted plaintext keys cached for $\le 60\text{s}$ with cluster-wide instant purge API (`POST /admin/secrets/purge`).
-- **Zero Provider SDKs**: Pure Go implementation with standard `net/http` — zero vulnerable third-party Python/Node AI dependencies.
+- **Bounded In-Memory Cache**: Decrypted plaintext keys cached for $\le 60\text{s}$ with cluster-wide instant purge via Redis pub/sub (`proofgate:ctl`) and admin purge API (`POST /admin/secrets/purge`).
+- **Zero Provider SDKs**: Pure Go implementation with standard `net/http` — zero vulnerable third-party AI dependencies.
 - **Distroless Hardening**: Non-root UID `65532:65532`, read-only root filesystem, capabilities dropped, no shell (`/bin/sh` does not exist).
 - **Cryptographic Attestations**: SHA-pinned actions, Cosign keyless signatures, Syft SPDX SBOMs, and SLSA provenance.
-- **Machine-Checked Threat Model**: Automated tests verify all 13 STRIDE threat mitigations against active codebase symbols.
+- **Machine-Checked Threat Model**: Automated tests verify all 16 STRIDE threat mitigations against active codebase symbols.
 
 ---
 
@@ -108,9 +108,9 @@ Read the full methodology and same-harness comparison with LiteLLM and Bifrost i
 1. **No OpenAI Responses API (Realtime / WebRTC):** Focuses on standard `/v1/chat/completions` and `/v1/embeddings`.
 2. **No AWS Bedrock SigV4 Authentication:** Direct native adapters for OpenAI, Anthropic, Gemini, and OpenAI-compatible inference servers.
 3. **No Multi-Candidate Completions (`n > 1`):** Optimized exclusively for production single-completion workloads (`n=1`).
-4. **Per-Replica Health State:** Degradation EWMA trackers run in-memory per pod without gossip synchronization over network interfaces.
+4. **Per-Replica Health State:** Degradation EWMA trackers run in-memory per pod without cluster-wide synchronization over network interfaces (gossip synchronization is experimental and disabled by default until R6).
 5. **No Telemetry Beacon:** ProofGate collects **zero** data or telemetry from your deployment. Adoption is tracked strictly through voluntary PRs in [ADOPTERS.md](ADOPTERS.md).
-6. **Key Revocation Window:** Deleted credentials can remain in in-memory cache for up to 60 seconds unless explicitly cleared via `POST /admin/secrets/purge`.
+6. **Key Revocation Window:** Deleted or rotated credentials are automatically invalidated across all replicas within $\le 1\text{s}$ via Redis pub/sub (`proofgate:ctl`). In offline or disconnected state, in-memory credential cache fallback expires within the configured TTL ($\le 60\text{s}$).
 
 ---
 

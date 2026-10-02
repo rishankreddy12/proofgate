@@ -18,62 +18,58 @@ func newTestLocalKEK() KEK {
 	return k
 }
 
-func TestMultiKEKIsolation(t *testing.T) {
+func TestMultiKEKRotation(t *testing.T) {
 	ctx := context.Background()
 
-	defaultKEK := newTestLocalKEK()
-	tenantAKEK := newTestLocalKEK()
-	tenantBKEK := newTestLocalKEK()
+	oldKEK1 := newTestLocalKEK()
+	oldKEK2 := newTestLocalKEK()
+	currentKEK := newTestLocalKEK()
 
-	multi := NewMultiKEK(defaultKEK, map[string]KEK{
-		"tenant-a": tenantAKEK,
-		"tenant-b": tenantBKEK,
-	})
+	// MultiKEK holds current default KEK and historical KEKs for rotation
+	multi := NewMultiKEK(currentKEK, oldKEK1, oldKEK2)
 
-	secretA := []byte("sk-tenant-a-secret-key-12345")
-	secretB := []byte("sk-tenant-b-secret-key-67890")
-	aadA := AAD("openai")
-	aadB := AAD("anthropic")
+	secret1 := []byte("sk-historical-key-1")
+	secret2 := []byte("sk-historical-key-2")
+	secretCurrent := []byte("sk-new-key-current")
 
-	// 1. Seal for Tenant A
-	sealedA, err := multi.SealForTenant(ctx, "tenant-a", secretA, aadA)
+	aad := AAD("openai")
+
+	// 1. Credentials sealed in the past under old KEKs
+	sealed1, err := Seal(ctx, oldKEK1, secret1, aad)
 	require.NoError(t, err)
-	require.Equal(t, tenantAKEK.ID(), sealedA.KEKID)
-
-	// 2. Open via MultiKEK succeeds (resolves Tenant A KEK)
-	openedA, err := Open(ctx, multi, sealedA, aadA)
+	sealed2, err := Seal(ctx, oldKEK2, secret2, aad)
 	require.NoError(t, err)
-	require.Equal(t, secretA, openedA)
 
-	// 3. Opening Tenant A's credential with global default KEK fails
-	_, err = Open(ctx, defaultKEK, sealedA, aadA)
-	require.Error(t, err, "default KEK should not be able to decrypt tenant-specific credential")
-	require.Contains(t, err.Error(), "credential was sealed with a different KEK")
-
-	// 4. Opening Tenant A's credential with Tenant B's KEK fails
-	_, err = Open(ctx, tenantBKEK, sealedA, aadA)
-	require.Error(t, err, "tenant B KEK should not be able to decrypt tenant A credential")
-	require.Contains(t, err.Error(), "credential was sealed with a different KEK")
-
-	// 5. Seal for Tenant B
-	sealedB, err := multi.SealForTenant(ctx, "tenant-b", secretB, aadB)
+	// 2. Open via MultiKEK succeeds by resolving historical KEKs
+	opened1, err := Open(ctx, multi, sealed1, aad)
 	require.NoError(t, err)
-	require.Equal(t, tenantBKEK.ID(), sealedB.KEKID)
+	require.Equal(t, secret1, opened1)
 
-	openedB, err := Open(ctx, multi, sealedB, aadB)
+	opened2, err := Open(ctx, multi, sealed2, aad)
 	require.NoError(t, err)
-	require.Equal(t, secretB, openedB)
+	require.Equal(t, secret2, opened2)
 
-	// Opening Tenant B's credential with Tenant A's KEK fails
-	_, err = Open(ctx, tenantAKEK, sealedB, aadB)
+	// 3. Opening with only currentKEK fails because it lacks the old KEKs
+	_, err = Open(ctx, currentKEK, sealed1, aad)
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "credential was sealed with a different KEK")
 
-	// 6. Tenant with no dedicated KEK falls back to default KEK
-	sealedDefault, err := multi.SealForTenant(ctx, "tenant-c", []byte("sk-default"), aadA)
+	// 4. Sealing through MultiKEK always uses current default KEK
+	sealedNew, err := Seal(ctx, multi, secretCurrent, aad)
 	require.NoError(t, err)
-	require.Equal(t, defaultKEK.ID(), sealedDefault.KEKID)
+	require.Equal(t, currentKEK.ID(), sealedNew.KEKID)
 
-	openedDefault, err := Open(ctx, defaultKEK, sealedDefault, aadA)
+	openedNew, err := Open(ctx, multi, sealedNew, aad)
 	require.NoError(t, err)
-	require.Equal(t, []byte("sk-default"), openedDefault)
+	require.Equal(t, secretCurrent, openedNew)
+
+	// 5. Rewrap historical credential to current KEK using MultiKEK as source
+	rewrapped1, err := Rewrap(ctx, multi, currentKEK, sealed1)
+	require.NoError(t, err)
+	require.Equal(t, currentKEK.ID(), rewrapped1.KEKID)
+
+	// Now currentKEK alone can open it
+	openedRewrapped, err := Open(ctx, currentKEK, rewrapped1, aad)
+	require.NoError(t, err)
+	require.Equal(t, secret1, openedRewrapped)
 }

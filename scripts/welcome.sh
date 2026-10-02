@@ -13,9 +13,19 @@ fi
 # Ensure demo tenant exists
 DATABASE_URL="$DB_URL" go run ./cmd/proofgatectl tenant create --name demo >/dev/null 2>&1 || true
 
-# Generate key
-KEY=$(DATABASE_URL="$DB_URL" go run ./cmd/proofgatectl key create --tenant demo --name quickstart 2>/dev/null || cat .quickstart-key 2>/dev/null || echo "pg_live_quickstart_demo")
-echo "$KEY" > .quickstart-key
+# Idempotently load or generate key
+KEY=""
+if [ -f .quickstart-key ]; then
+  CANDIDATE=$(cat .quickstart-key)
+  if [ -n "$CANDIDATE" ] && DATABASE_URL="$DB_URL" go run ./cmd/proofgatectl key verify --key "$CANDIDATE" >/dev/null 2>&1; then
+    KEY="$CANDIDATE"
+  fi
+fi
+
+if [ -z "$KEY" ]; then
+  KEY=$(DATABASE_URL="$DB_URL" go run ./cmd/proofgatectl key create --tenant demo --name quickstart)
+  echo "$KEY" > .quickstart-key
+fi
 
 cat <<EOF
 

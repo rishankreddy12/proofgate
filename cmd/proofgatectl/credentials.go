@@ -100,3 +100,71 @@ func providerKey(ctx context.Context, st *store.Store, args []string) {
 		die("usage: proofgatectl provider-key set|list|rotate-kek")
 	}
 }
+
+func runSecrets(ctx context.Context, st *store.Store, args []string) {
+	if len(args) == 0 {
+		die("usage: proofgatectl secrets rewrap [--config path] [--from-local-kek-file path]")
+	}
+	switch args[0] {
+	case "rewrap":
+		fs := flag.NewFlagSet("secrets rewrap", flag.ExitOnError)
+		cfgPath := fs.String("config", "deploy/proofgate.yaml", "gateway config (for current KEK settings)")
+		fromLocal := fs.String("from-local-kek-file", "", "old local KEK file (optional if configured in previous_keks)")
+		_ = fs.Parse(args[1:])
+
+		cfg, err := config.Load(*cfgPath)
+		if err != nil {
+			die("config: %v", err)
+		}
+		currentKEK, err := secrets.FromConfigWithOptions(cfg.Secrets.KEK, cfg.Secrets.LocalKEKFile, cfg.Secrets.VaultAddr, cfg.Secrets.VaultKey, cfg.Secrets.VaultAuth, cfg.Secrets.VaultRole, cfg.Secrets.VaultTokenFile)
+		if err != nil {
+			die("current kek: %v", err)
+		}
+
+		var sourceKEK secrets.KEK
+		if *fromLocal != "" {
+			sourceKEK, err = secrets.LoadLocalKEK(*fromLocal)
+			if err != nil {
+				die("from-local kek: %v", err)
+			}
+		} else {
+			multi := secrets.NewMultiKEK(currentKEK)
+			for _, pcfg := range cfg.Secrets.PreviousKEKs {
+				pkek, perr := secrets.FromConfigWithOptions(pcfg.KEK, pcfg.LocalKEKFile, pcfg.VaultAddr, pcfg.VaultKey, pcfg.VaultAuth, pcfg.VaultRole, pcfg.VaultTokenFile)
+				if perr != nil {
+					die("previous kek: %v", perr)
+				}
+				if pkek != nil {
+					multi.RegisterKEK(pkek)
+				}
+			}
+			sourceKEK = multi
+		}
+
+		all, err := st.AllSealed(ctx)
+		if err != nil {
+			die("read sealed: %v", err)
+		}
+
+		n := 0
+		for id, s := range all {
+			if s.KEKID == currentKEK.ID() {
+				continue // already sealed under current KEK
+			}
+			r, err := secrets.Rewrap(ctx, sourceKEK, currentKEK, s)
+			if err != nil {
+				die("rewrap %v: %v", id, err)
+			}
+			provider := id[0].(string)
+			version := id[1].(int)
+			if err := st.ReplaceWrapped(ctx, provider, version, r); err != nil {
+				die("save %v: %v", id, err)
+			}
+			n++
+		}
+		fmt.Printf("rewrapped %d credentials to current KEK %s\n", n, currentKEK.ID())
+	default:
+		die("usage: proofgatectl secrets rewrap")
+	}
+}
+

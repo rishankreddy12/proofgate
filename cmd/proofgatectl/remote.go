@@ -948,3 +948,62 @@ func runChat(ctx context.Context, gf globalFlags, args []string) {
 		fmt.Println()
 	}
 }
+
+func runAdmin(ctx context.Context, gf globalFlags, args []string) {
+	if len(args) == 0 {
+		die("usage: proofgatectl admin <audit> [flags]")
+	}
+	switch args[0] {
+	case "audit":
+		fs := flag.NewFlagSet("admin audit", flag.ExitOnError)
+		since := fs.String("since", "", "filter events since timestamp (RFC3339)")
+		actor := fs.String("actor", "", "filter events by actor username")
+		action := fs.String("action", "", "filter events by action name")
+		limit := fs.Int("limit", 50, "maximum events to return")
+		_ = fs.Parse(args[1:])
+
+		client, err := NewClient(gf.profile, gf.server, gf.insecure, gf.output == "json")
+		if err != nil {
+			die("client: %v", err)
+		}
+
+		path := fmt.Sprintf("/admin/cp/audit?limit=%d", *limit)
+		if *since != "" {
+			path += "&since=" + *since
+		}
+		if *actor != "" {
+			path += "&actor=" + *actor
+		}
+		if *action != "" {
+			path += "&action=" + *action
+		}
+
+		var events []map[string]any
+		if _, err := client.Do(ctx, "GET", path, nil, &events); err != nil {
+			die("audit: %v", err)
+		}
+
+		if client.OutputJSON {
+			b, _ := json.MarshalIndent(events, "", "  ")
+			fmt.Println(string(b))
+			return
+		}
+
+		fmt.Printf("%-20s %-15s %-20s %-15s %-15s %s\n", "TIMESTAMP", "ACTOR", "ACTION", "TARGET", "RESULT", "IP")
+		for _, e := range events {
+			ts, _ := e["ts"].(string)
+			if len(ts) > 19 {
+				ts = ts[:19]
+			}
+			act, _ := e["actor"].(string)
+			actionName, _ := e["action"].(string)
+			target, _ := e["target"].(string)
+			res, _ := e["result"].(string)
+			ip, _ := e["ip"].(string)
+			fmt.Printf("%-20s %-15s %-20s %-15s %-15s %s\n", ts, act, actionName, target, res, ip)
+		}
+	default:
+		die("unknown admin command: %s", args[0])
+	}
+}
+

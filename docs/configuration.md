@@ -272,7 +272,7 @@ Controls envelope encryption and Key Encryption Key (KEK) management.
 | `vault_role` | string | `""` | Vault Kubernetes auth role name. |
 | `vault_token_file` | string | `"/var/run/secrets/kubernetes.io/serviceaccount/token"` | Path to Kubernetes service account token file for Vault authentication. |
 | `cache_ttl` | duration | `60s` | Maximum TTL for decrypted in-memory provider credentials before automatic eviction. |
-| `tenant_keks` | map | `{}` | Per-tenant Key Encryption Key override map for dedicated KMS/Vault keys. |
+| `previous_keks` | list of objects | `[]` | List of previous KEK configurations preserved to decrypt historical credentials during KEK rotation. |
 
 ```yaml
 secrets:

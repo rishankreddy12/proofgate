@@ -135,6 +135,26 @@ func (f *fakeAdminStore) ListCredentials(ctx context.Context) ([]store.Credentia
 	return nil, nil
 }
 
+func (f *fakeAdminStore) ListAdminAuditFiltered(ctx context.Context, filter store.AdminAuditFilter) ([]store.AdminAuditEvent, error) {
+	var out []store.AdminAuditEvent
+	for _, a := range f.audit {
+		if !filter.Since.IsZero() && a.TS.Before(filter.Since) {
+			continue
+		}
+		if filter.Actor != "" && a.Actor != filter.Actor {
+			continue
+		}
+		if filter.Action != "" && a.Action != filter.Action {
+			continue
+		}
+		out = append(out, a)
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 func TestAdminRoutesDisabledAuth(t *testing.T) {
 	mux := http.NewServeMux()
 	reloadCalled := false
@@ -669,4 +689,87 @@ func TestAdminChatRBAC(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "cp:admin", rec.Header().Get("X-Principal-KeyName"))
+}
+
+func TestAdminAuditEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	fs := newFakeAdminStore()
+	mem := adminauth.NewMemStore()
+	authCfg := config.AdminAuthConfig{
+		MaxLoginAttempts:   5,
+		LockoutDuration:    15 * time.Minute,
+		SessionIdleTimeout: 30 * time.Minute,
+		SessionAbsTimeout:  12 * time.Hour,
+	}
+	authSvc := adminauth.NewServiceWithStore(fs, mem, authCfg, nil)
+
+	deps := &ControlPlaneDeps{
+		Store:       fs,
+		AuthService: authSvc,
+	}
+	RegisterAdminRoutes(mux, deps, true)
+
+	// Seed audit events
+	ctx := context.Background()
+	_ = fs.RecordAdminAudit(ctx, "alice", "config.reload", "", nil, "127.0.0.1", "ok")
+	_ = fs.RecordAdminAudit(ctx, "bob", "cache.purge", "", nil, "127.0.0.1", "ok")
+	_ = fs.RecordAdminAudit(ctx, "alice", "user.create", "charlie", nil, "127.0.0.1", "ok")
+
+	// Create admin, operator, viewer users
+	hash, _ := adminauth.HashPassword("CommonPass12345!")
+	fs.users["admin_user"] = store.AdminUser{Username: "admin_user", PasswordHash: hash, Role: "admin", Enabled: true}
+	fs.users["op_user"] = store.AdminUser{Username: "op_user", PasswordHash: hash, Role: "operator", Enabled: true}
+	fs.users["view_user"] = store.AdminUser{Username: "view_user", PasswordHash: hash, Role: "viewer", Enabled: true}
+
+	login := func(user string) string {
+		body, _ := json.Marshal(LoginRequest{Username: user, Password: "CommonPass12345!"})
+		req := httptest.NewRequest("POST", "/admin/auth/login", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		var resp LoginResponse
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		return resp.Token
+	}
+
+	adminTok := login("admin_user")
+	opTok := login("op_user")
+	viewTok := login("view_user")
+
+	// 1. Viewer is forbidden (403)
+	req := httptest.NewRequest("GET", "/admin/cp/audit", nil)
+	req.Header.Set("Authorization", "Bearer "+viewTok)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	// 2. Operator is forbidden (403)
+	req = httptest.NewRequest("GET", "/admin/cp/audit", nil)
+	req.Header.Set("Authorization", "Bearer "+opTok)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	// 3. Admin can list all audit events (200 OK)
+	req = httptest.NewRequest("GET", "/admin/cp/audit", nil)
+	req.Header.Set("Authorization", "Bearer "+adminTok)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var all []store.AdminAuditEvent
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&all))
+	require.Len(t, all, 6) // 3 seeded + 3 logins
+
+	// 4. Admin filter by actor
+	req = httptest.NewRequest("GET", "/admin/cp/audit?actor=bob", nil)
+	req.Header.Set("Authorization", "Bearer "+adminTok)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var bobEvents []store.AdminAuditEvent
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&bobEvents))
+	require.Len(t, bobEvents, 1)
+	require.Equal(t, "bob", bobEvents[0].Actor)
+	require.Equal(t, "cache.purge", bobEvents[0].Action)
 }
