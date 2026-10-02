@@ -16,6 +16,7 @@ type TenantPolicy struct {
 	MonthlyBudgetUSD float64            `json:"monthly_budget_usd"`
 	Strict           bool               `json:"strict"` // fail closed when Redis is unavailable
 	Cache            *TenantCachePolicy `json:"cache,omitempty"`
+	ShadowConsent    bool               `json:"shadow_consent"`
 }
 
 func (p TenantPolicy) BudgetMicros() int64 { return int64(math.Round(p.MonthlyBudgetUSD * 1e6)) }

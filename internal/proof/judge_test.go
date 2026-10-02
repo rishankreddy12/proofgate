@@ -2,6 +2,7 @@ package proof
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/proofgate/proofgate/internal/api"
@@ -22,6 +23,10 @@ func TestJudge_CacheEvaluation_ParseValid(t *testing.T) {
 		require.Equal(t, "judge-model", route)
 		require.Equal(t, 0.0, *req.Temperature)
 		require.Equal(t, 100, *req.MaxTokens)
+		require.NotEmpty(t, req.ResponseFormat, "must include structured JSON schema")
+		prompt := req.Messages[0].Content.PlainText()
+		require.Contains(t, prompt, "<<<DATA-")
+		require.Contains(t, prompt, "<<<END-")
 		return makeChatResponse(`{"acceptable": true, "reason": "Both answers provide identical instructions."}`), nil
 	})
 
@@ -74,6 +79,31 @@ func TestJudge_CacheEvaluation_ParseInvalid_Retry(t *testing.T) {
 	require.Equal(t, "judge_unparseable", res2.Reason)
 }
 
+func TestJudge_StrictParsingRejection(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Unknown fields rejected
+	callerUnknown := ChatCallerFunc(func(_ context.Context, _ string, _ *api.ChatRequest) (*api.ChatResponse, error) {
+		return makeChatResponse(`{"acceptable": true, "reason": "ok", "extra_field": 123}`), nil
+	})
+	jUnknown := NewJudge(callerUnknown, "m")
+	res, err := jUnknown.EvaluateCache(ctx, ShadowRecord{})
+	require.NoError(t, err)
+	require.False(t, res.Acceptable)
+	require.Equal(t, "judge_unparseable", res.Reason)
+
+	// 2. Reason exceeding 200 chars rejected
+	longReason := strings.Repeat("x", 201)
+	callerLong := ChatCallerFunc(func(_ context.Context, _ string, _ *api.ChatRequest) (*api.ChatResponse, error) {
+		return makeChatResponse(`{"acceptable": true, "reason": "` + longReason + `"}`), nil
+	})
+	jLong := NewJudge(callerLong, "m")
+	resLong, err := jLong.EvaluateCache(ctx, ShadowRecord{})
+	require.NoError(t, err)
+	require.False(t, resLong.Acceptable)
+	require.Equal(t, "judge_unparseable", resLong.Reason)
+}
+
 func TestJudge_PairwiseRouting_PositionBiasSwap(t *testing.T) {
 	ctx := context.Background()
 
@@ -81,8 +111,11 @@ func TestJudge_PairwiseRouting_PositionBiasSwap(t *testing.T) {
 	// Answer A = cheap, Answer B = strong
 	caller1 := ChatCallerFunc(func(_ context.Context, _ string, req *api.ChatRequest) (*api.ChatResponse, error) {
 		prompt := req.Messages[0].Content.PlainText()
-		require.Contains(t, prompt, "Answer A: cheap text")
-		require.Contains(t, prompt, "Answer B: strong text")
+		require.Contains(t, prompt, "Answer A:")
+		require.Contains(t, prompt, "cheap text")
+		require.Contains(t, prompt, "Answer B:")
+		require.Contains(t, prompt, "strong text")
+		require.Contains(t, prompt, "<<<DATA-")
 		return makeChatResponse(`{"score_a": 0.7, "score_b": 0.95, "reason": "B is more detailed."}`), nil
 	})
 
@@ -99,8 +132,10 @@ func TestJudge_PairwiseRouting_PositionBiasSwap(t *testing.T) {
 	// Answer A = strong, Answer B = cheap
 	caller2 := ChatCallerFunc(func(_ context.Context, _ string, req *api.ChatRequest) (*api.ChatResponse, error) {
 		prompt := req.Messages[0].Content.PlainText()
-		require.Contains(t, prompt, "Answer A: strong text")
-		require.Contains(t, prompt, "Answer B: cheap text")
+		require.Contains(t, prompt, "Answer A:")
+		require.Contains(t, prompt, "strong text")
+		require.Contains(t, prompt, "Answer B:")
+		require.Contains(t, prompt, "cheap text")
 		// The LLM judges Answer A (strong) as 0.95 and Answer B (cheap) as 0.7
 		return makeChatResponse(`{"score_a": 0.95, "score_b": 0.7, "reason": "A is better."}`), nil
 	})
@@ -113,4 +148,44 @@ func TestJudge_PairwiseRouting_PositionBiasSwap(t *testing.T) {
 	// The swap must be accurately undone: ScoreCheap is 0.7, ScoreStrong is 0.95
 	require.InDelta(t, 0.7, res2.ScoreCheap, 0.001)
 	require.InDelta(t, 0.95, res2.ScoreStrong, 0.001)
+}
+
+func TestJudge_DisagreementDetection(t *testing.T) {
+	ctx := context.Background()
+
+	// Bias where position A always wins regardless of content
+	callerPositionAAlwaysWins := ChatCallerFunc(func(_ context.Context, _ string, _ *api.ChatRequest) (*api.ChatResponse, error) {
+		return makeChatResponse(`{"score_a": 0.95, "score_b": 0.50, "reason": "First was superior."}`), nil
+	})
+
+	judge := NewJudge(callerPositionAAlwaysWins, "judge-model")
+	_, _, disagreed, err := judge.EvaluateRoutingBidirectional(ctx, "prompt", "cheap text", "strong text")
+	require.NoError(t, err)
+	require.True(t, disagreed, "disagreement must be flagged when position A always wins regardless of swapped content")
+}
+
+func TestJudge_ConsentAndProviderAllowlist(t *testing.T) {
+	ctx := context.Background()
+	caller := ChatCallerFunc(func(_ context.Context, _ string, _ *api.ChatRequest) (*api.ChatResponse, error) {
+		return makeChatResponse(`{"acceptable": true, "reason": "ok"}`), nil
+	})
+
+	judge := NewJudge(caller, "judge-model")
+	judge.SetRequireConsent(true)
+	judge.SetAllowedProviders([]string{"openai", "anthropic"})
+
+	// 1. Without tenant consent -> error
+	_, err := judge.EvaluateCacheWithConsent(ctx, ShadowRecord{}, false)
+	require.ErrorIs(t, err, ErrShadowConsentRequired)
+
+	// 2. With tenant consent, but unallowed provider -> error
+	judge.SetJudgeProvider("untrusted-provider")
+	_, err = judge.EvaluateCacheWithConsent(ctx, ShadowRecord{}, true)
+	require.ErrorIs(t, err, ErrJudgeProviderNotAllowed)
+
+	// 3. With tenant consent and allowed provider -> succeeds
+	judge.SetJudgeProvider("openai")
+	res, err := judge.EvaluateCacheWithConsent(ctx, ShadowRecord{}, true)
+	require.NoError(t, err)
+	require.True(t, res.Acceptable)
 }

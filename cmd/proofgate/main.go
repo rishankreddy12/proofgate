@@ -29,6 +29,7 @@ import (
 	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/health"
 	"github.com/proofgate/proofgate/internal/mcpproxy"
+	"github.com/proofgate/proofgate/internal/proof"
 	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/proofgate/proofgate/internal/ratelimit"
 	"github.com/proofgate/proofgate/internal/router"
@@ -333,6 +334,19 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 			defer gossip.Stop()
 		}
 	}
+
+	instanceID := uuid.NewString()
+	leader := proof.NewLeader(rdb, instanceID, "proofgate:leader:monitor", 30*time.Second, 10*time.Second)
+	leader.Start(ctx)
+
+	chClient := proof.NewCH(chConn)
+	go proof.RunMonitor(ctx, leader, cfg.Proof.MonitorInterval, func(runCtx context.Context) error {
+		rt := state.Load()
+		if rt != nil && rt.Config != nil {
+			return proof.MonitorAllRoutes(runCtx, rt.Config.Routes, chClient, chClient, st, rt.Config.Proof)
+		}
+		return nil
+	})
 
 	// Refuse unsafe config at startup: non-loopback admin_addr requires admin_auth.enabled
 	if !config.IsLoopbackAddr(cfg.Server.AdminAddr) && !cfg.AdminAuth.Enabled {

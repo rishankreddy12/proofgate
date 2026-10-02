@@ -179,6 +179,7 @@ type CacheConfig struct {
 	MaxEntryBytes           int           `yaml:"max_entry_bytes"`
 	AcknowledgeUncalibrated bool          `yaml:"acknowledge_uncalibrated"`
 	AllowClientKey          bool          `yaml:"allow_client_key"`
+	AuditSampleRate         float64       `yaml:"audit_sample_rate"`
 }
 
 type InjectionGuardConfig struct {
@@ -320,7 +321,12 @@ type Config struct {
 }
 
 type ProofConfig struct {
-	MinThreshold float64 `yaml:"min_threshold"` // default 0.86
+	MinThreshold          float64       `yaml:"min_threshold"` // default 0.86
+	MonitorInterval       time.Duration `yaml:"monitor_interval"`
+	RollbackThreshold     float64       `yaml:"rollback_threshold"`
+	MinPairs              int           `yaml:"min_pairs"`
+	ShadowConsent         bool          `yaml:"shadow_consent"`
+	AllowedJudgeProviders []string      `yaml:"allowed_judge_providers"`
 }
 
 func Load(path string) (*Config, error) {
@@ -502,6 +508,15 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Proof.MinThreshold == 0 {
 		c.Proof.MinThreshold = 0.86
+	}
+	if c.Proof.MonitorInterval == 0 {
+		c.Proof.MonitorInterval = 60 * time.Second
+	}
+	if c.Proof.RollbackThreshold == 0 {
+		c.Proof.RollbackThreshold = -0.05
+	}
+	if c.Proof.MinPairs == 0 {
+		c.Proof.MinPairs = 50
 	}
 	for i := range c.Routes {
 		r := &c.Routes[i]

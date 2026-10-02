@@ -223,3 +223,17 @@ func (c *CH) RoutingSavings(ctx context.Context, route string, since time.Time) 
 	}
 	return actual, counterfactual, cheapShare, int(cnt), err
 }
+
+// CacheErrorRate returns total evaluated semantic cache hits and unacceptable hits since time t.
+func (c *CH) CacheErrorRate(ctx context.Context, route string, since time.Time) (total int, unacceptable int, err error) {
+	row := c.conn.QueryRow(ctx, `
+		SELECT count(), countIf(not acceptable)
+		FROM cache_labels AS l FINAL
+		INNER JOIN cache_shadow AS s ON s.id = l.shadow_id
+		WHERE s.route = ? AND s.ts >= ?`, route, since)
+	var tot, bad uint64
+	if err := row.Scan(&tot, &bad); err != nil {
+		return 0, 0, err
+	}
+	return int(tot), int(bad), nil
+}

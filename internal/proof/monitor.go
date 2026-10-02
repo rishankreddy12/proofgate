@@ -3,6 +3,7 @@ package proof
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/proofgate/proofgate/internal/stats"
@@ -84,6 +85,16 @@ func MonitorQuality(
 			if err != nil {
 				return res, fmt.Errorf("write rollback override: %w", err)
 			}
+			RollbackTotal.WithLabelValues(route, "quality_regression").Inc()
+			slog.Warn("proof monitor executed automated rollback",
+				"route", route,
+				"ci_low", ciLow,
+				"ci_high", ciHigh,
+				"mean", mean,
+				"threshold", rollbackThreshold,
+				"pairs", n,
+				"reason", res.Message,
+			)
 		}
 	}
 

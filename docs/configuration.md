@@ -370,6 +370,7 @@ Configured per route under `routes[].cache`.
 | `max_entry_bytes` | integer | `262144` | Maximum payload size in bytes cached in Redis (default 256KB). |
 | `acknowledge_uncalibrated` | boolean | `false` | When `true`, allows `cache.mode: on` without verified calibration overrides. |
 | `allow_client_key` | boolean | `false` | When `true`, permits client to supply query text via `X-ProofGate-Cache-Query` header with context isolation. |
+| `audit_sample_rate` | float | `0.0` | Probability (0.0 to 1.0) of sampling semantic hits for background upstream audit evaluation and false-hit detection. |
 
 > **Context Isolation:** When `allow_client_key` is enabled, ProofGate stores a SHA-256 hash of all preceding context messages (`ContextHash`) and enforces context equality on semantic hits, preventing cross-tenant or cross-document data leakage in RAG workloads. Multi-user applications sharing an API key should also enable `per_user: true` so that user contexts and scopes are isolated.
 
@@ -611,3 +612,31 @@ mcp_insecure_hosts:
   - "localhost"
   - "127.0.0.1"
 ```
+
+---
+
+## 16. Proof Quality & Automated Rollback (`proof`)
+
+Configures automated statistical quality monitoring, leader-gated rollbacks, and judge privacy.
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `proof` | object | - | Root proof and quality monitoring configuration. |
+| `min_threshold` | float | `0.86` | Documented minimum calibrated semantic cache threshold. |
+| `monitor_interval` | duration | `60s` | Polling interval for automated quality and rollback evaluations. |
+| `rollback_threshold` | float | `-0.05` | CI quality delta floor triggering automatic rollback of smart routing. |
+| `min_pairs` | integer | `50` | Minimum shadow sample pairs required before admitting statistical rollback decisions. |
+| `shadow_consent` | boolean | `false` | When `false`, prompts do not leave the tenant's chosen provider path for background judging without explicit opt-in. |
+| `allowed_judge_providers` | list of strings | `[]` | Allow-list of upstream providers permitted to act as quality judges. |
+
+```yaml
+proof:
+  min_threshold: 0.86
+  monitor_interval: 60s
+  rollback_threshold: -0.05
+  min_pairs: 50
+  shadow_consent: false
+  allowed_judge_providers:
+    - openai
+```
+

@@ -42,6 +42,19 @@ func ApplyOverrides(cfg *config.Config, ovs []store.Override) (*config.Config, [
 				continue
 			}
 			r.Cache.Threshold = v
+		case "smart_route.mode":
+			if o.Value != "off" && o.Value != "shadow" && o.Value != "on" {
+				errs = append(errs, fmt.Errorf("route %q: bad smart_route.mode %q", o.Route, o.Value))
+				continue
+			}
+			r.SmartRoute.Mode = o.Value
+		case "cache.audit_sample_rate":
+			v, err := strconv.ParseFloat(o.Value, 64)
+			if err != nil || v < 0 || v > 1 {
+				errs = append(errs, fmt.Errorf("route %q: bad cache.audit_sample_rate %q", o.Route, o.Value))
+				continue
+			}
+			r.Cache.AuditSampleRate = v
 		default:
 			errs = append(errs, fmt.Errorf("route %q: unknown override key %q", o.Route, o.Key))
 		}
