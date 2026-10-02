@@ -20,8 +20,9 @@ type Message struct {
 }
 
 const (
-	CodeToolDenied = -32001
-	CodeRunLimit   = -32002
+	CodeToolDenied   = -32001
+	CodeRunLimit     = -32002
+	CodeMethodDenied = -32003
 )
 
 func Parse(body []byte) ([]Message, bool, error) {
@@ -51,14 +52,14 @@ func ToolCall(m Message) (string, json.RawMessage, bool) {
 	return p.Name, p.Arguments, true
 }
 
-func FilterToolsList(result json.RawMessage, allow func(string) bool) (json.RawMessage, error) {
+func FilterToolsList(result json.RawMessage, allow func(string) bool) (json.RawMessage, bool, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(result, &obj); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var tools []json.RawMessage
 	if err := json.Unmarshal(obj["tools"], &tools); err != nil {
-		return result, nil // not a tools list; leave untouched
+		return result, false, nil // not a tools list; leave untouched
 	}
 	kept := make([]json.RawMessage, 0, len(tools))
 	for _, t := range tools {
@@ -69,12 +70,14 @@ func FilterToolsList(result json.RawMessage, allow func(string) bool) (json.RawM
 			kept = append(kept, t)
 		}
 	}
+	filtered := len(kept) < len(tools)
 	b, err := json.Marshal(kept)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	obj["tools"] = b
-	return json.Marshal(obj)
+	res, err := json.Marshal(obj)
+	return res, filtered, err
 }
 
 func ErrorMessage(id json.RawMessage, code int, msg string) Message {

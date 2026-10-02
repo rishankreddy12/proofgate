@@ -27,6 +27,7 @@ type RunPolicy struct {
 	MaxTokens      int           `json:"max_tokens"`
 	TTL            time.Duration `json:"ttl"`
 	RequireRunID   bool          `json:"require_run_id"`
+	RunIDFallback  string        `json:"run_id_fallback,omitempty"`
 	LoopRepeats    int           `json:"loop_repeats"`
 	LoopWindow     int           `json:"loop_window"`
 	FuzzyLoop      bool          `json:"fuzzy_loop"`
@@ -52,12 +53,14 @@ func (p RunPolicy) WithDefaults() RunPolicy {
 func (p RunPolicy) CostMicros() int64 { return int64(math.Round(p.MaxCostUSD * 1e6)) }
 
 type MCPServerPolicy struct {
-	Allow []string `json:"allow"`
-	Deny  []string `json:"deny"`
+	Allow        []string `json:"allow"`
+	Deny         []string `json:"deny"`
+	AllowMethods []string `json:"allow_methods,omitempty"`
 }
 
 type MCPPolicy struct {
-	Servers map[string]MCPServerPolicy `json:"servers"`
+	Servers      map[string]MCPServerPolicy `json:"servers"`
+	AllowMethods []string                   `json:"allow_methods,omitempty"`
 }
 
 // KeyPolicy holds per-key options.

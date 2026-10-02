@@ -75,3 +75,23 @@ func TestRunStage(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, c.Values["run.id"], "keys without a run policy are not tracked")
 }
+
+func TestRunIDFallbackKey(t *testing.T) {
+	fs := &fakeStore{next: StepResult{Status: Allowed, Steps: 1}}
+	s := NewStage(fs)
+	p := &store.RunPolicy{RunIDFallback: "key", MaxSteps: 5}
+
+	c := runCall(p, "") // No X-ProofGate-Run-Id header provided
+	_, err := s.Before(context.Background(), c)
+	require.NoError(t, err)
+	require.NotEmpty(t, c.Values["run.id"])
+	require.Contains(t, c.Values["run.id"].(string), "key_")
+
+	// When limit exceeded, it blocks
+	fs.next = StepResult{Status: StepsExceeded}
+	c2 := runCall(p, "")
+	_, err = s.Before(context.Background(), c2)
+	var ae *api.Error
+	require.ErrorAs(t, err, &ae)
+	require.Equal(t, 402, ae.Status)
+}

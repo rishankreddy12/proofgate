@@ -16,6 +16,16 @@ func match(globs []string, name string) bool {
 	return false
 }
 
+// DefaultAllowedMethods lists the methods allowed by default per the MCP specification.
+// Other method families (such as resources/*, prompts/*, sampling/*) must be explicitly allowed.
+var DefaultAllowedMethods = []string{
+	"initialize",
+	"ping",
+	"tools/list",
+	"tools/call",
+	"notifications/*",
+}
+
 func Allowed(p *store.MCPPolicy, server, tool string) bool {
 	if p == nil {
 		return false
@@ -25,4 +35,17 @@ func Allowed(p *store.MCPPolicy, server, tool string) bool {
 		return false
 	}
 	return match(sp.Allow, tool)
+}
+
+// MethodAllowed checks if the given MCP method is permitted by the key's policy or defaults.
+func MethodAllowed(p *store.MCPPolicy, server, method string) bool {
+	if p != nil {
+		if sp, ok := p.Servers[server]; ok && len(sp.AllowMethods) > 0 {
+			return match(sp.AllowMethods, method)
+		}
+		if len(p.AllowMethods) > 0 {
+			return match(p.AllowMethods, method)
+		}
+	}
+	return match(DefaultAllowedMethods, method)
 }

@@ -141,3 +141,70 @@ func TestUnknownServer(t *testing.T) {
 	resp, _ := rpc(t, s.URL+"/mcp/slack", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, "application/json")
 	require.Equal(t, 404, resp.StatusCode)
 }
+
+func rpcWithoutRunID(t *testing.T, url, body, accept string) (*http.Response, []byte) {
+	req, _ := http.NewRequest("POST", url, bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer pg_live_gatewaykey")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", accept)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, b
+}
+
+func TestDeniedMethodResourcesRead(t *testing.T) {
+	var calls atomic.Int32
+	up := fakeMCP(t, &calls)
+	defer up.Close()
+	var audits []Audit
+	s := proxyServer(t, up.URL, nopRuns{status: agentrun.Allowed}, &audits)
+
+	_, b := rpc(t, s.URL+"/mcp/github", `{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"file:///test"}}`, "application/json")
+	require.Contains(t, string(b), `-32003`)
+	require.Contains(t, string(b), `method resources/read is not allowed`)
+	require.EqualValues(t, 0, calls.Load(), "upstream must never receive denied method call")
+	require.Len(t, audits, 1)
+	require.Equal(t, "resources/read", audits[0].Method)
+	require.Equal(t, "denied", audits[0].Decision)
+	require.Equal(t, 200, audits[0].Status)
+}
+
+func TestAuditCapturesUpstreamStatusNotHardcoded200(t *testing.T) {
+	var calls atomic.Int32
+	errUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal upstream error"}`))
+	}))
+	defer errUp.Close()
+
+	var audits []Audit
+	s := proxyServer(t, errUp.URL, nopRuns{status: agentrun.Allowed}, &audits)
+
+	resp, _ := rpc(t, s.URL+"/mcp/github", `{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"get_file","arguments":{}}}`, "application/json")
+	require.Equal(t, 500, resp.StatusCode)
+	require.EqualValues(t, 1, calls.Load())
+	require.Len(t, audits, 1)
+	require.Equal(t, "tools/call", audits[0].Method)
+	require.Equal(t, 500, audits[0].Status, "audit row must capture actual upstream status 500, not hard-coded 200")
+	require.Equal(t, "allowed", audits[0].Decision)
+}
+
+func TestRunLimitAppliesWithoutHeader(t *testing.T) {
+	var calls atomic.Int32
+	up := fakeMCP(t, &calls)
+	defer up.Close()
+	var audits []Audit
+	s := proxyServer(t, up.URL, nopRuns{status: agentrun.StepsExceeded}, &audits)
+
+	// Send without X-ProofGate-Run-Id header
+	_, b := rpcWithoutRunID(t, s.URL+"/mcp/github", `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"get_file","arguments":{}}}`, "application/json")
+	require.Contains(t, string(b), `-32002`)
+	require.EqualValues(t, 0, calls.Load(), "call must be blocked by run limit despite missing header")
+	require.Len(t, audits, 1)
+	require.Equal(t, "run_limit", audits[0].Decision)
+	require.True(t, len(audits[0].RunID) > 0, "runID must be derived server-side")
+	require.Contains(t, audits[0].RunID, "mcp_")
+}

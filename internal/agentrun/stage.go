@@ -2,6 +2,7 @@ package agentrun
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -65,7 +66,12 @@ func (st *stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 		if p.RequireRunID {
 			return false, api.BadRequest("X-ProofGate-Run-Id is required for this key")
 		}
-		return false, nil
+		if p.RunIDFallback == "key" {
+			sum := sha256.Sum256([]byte(c.Principal.TenantID + "|" + c.Principal.KeyID))
+			runID = fmt.Sprintf("key_%x", sum[:16])
+		} else {
+			return false, nil
+		}
 	}
 	if !RunIDPattern.MatchString(runID) {
 		return false, api.BadRequest("X-ProofGate-Run-Id must match " + RunIDPattern.String())

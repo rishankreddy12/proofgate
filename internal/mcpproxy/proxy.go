@@ -3,6 +3,7 @@ package mcpproxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,8 +92,27 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal, _ := auth.FromContext(r.Context())
+	runID := r.Header.Get("X-ProofGate-Run-Id")
+	if runID == "" {
+		sessionID := r.Header.Get("Mcp-Session-Id")
+		sum := sha256.Sum256([]byte(principal.TenantID + "|" + principal.KeyID + "|" + sessionID))
+		runID = fmt.Sprintf("mcp_%x", sum[:16])
+	}
+	start := time.Now()
 	if r.Method != http.MethodPost {
-		p.passthrough(w, r, up, nil)
+		p.passthrough(w, r, up, nil, func(status int, filtered bool) {
+			p.d.Audit(Audit{
+				TS:        start,
+				TenantID:  principal.TenantID,
+				KeyID:     principal.KeyID,
+				Server:    name,
+				Method:    r.Method,
+				RunID:     runID,
+				Decision:  "allowed",
+				Status:    status,
+				LatencyMs: uint32(time.Since(start).Milliseconds()),
+			})
+		})
 		return
 	}
 	maxBody := p.d.MaxRequestBodyBytes
@@ -109,46 +129,100 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, api.BadRequest("invalid JSON-RPC"))
 		return
 	}
-	runID := r.Header.Get("X-ProofGate-Run-Id")
-	if runID == "" {
-		runID = r.Header.Get("Mcp-Session-Id")
-	}
-	audit := func(m Message, tool, decision string, status int, start time.Time) {
-		p.d.Audit(Audit{TS: start, TenantID: principal.TenantID, KeyID: principal.KeyID, Server: name, Method: m.Method,
-			Tool: tool, RunID: runID, Decision: decision, Status: status, LatencyMs: uint32(time.Since(start).Milliseconds())})
-	}
-	start := time.Now()
+
 	var refused []Message
 	listIDs := map[string]bool{}
 	for _, m := range msgs {
+		if !MethodAllowed(principal.Key.MCP, name, m.Method) {
+			refused = append(refused, ErrorMessage(m.ID, CodeMethodDenied, fmt.Sprintf("method %s is not allowed for this key on server %s", m.Method, name)))
+			p.d.Audit(Audit{
+				TS:        start,
+				TenantID:  principal.TenantID,
+				KeyID:     principal.KeyID,
+				Server:    name,
+				Method:    m.Method,
+				RunID:     runID,
+				Decision:  "denied",
+				Status:    http.StatusOK,
+				LatencyMs: uint32(time.Since(start).Milliseconds()),
+			})
+			continue
+		}
 		if m.Method == "tools/list" {
 			listIDs[string(m.ID)] = true
 		}
 		tool, args, isCall := ToolCall(m)
-		if !isCall {
-			continue
-		}
-		if !Allowed(principal.Key.MCP, name, tool) {
-			refused = append(refused, ErrorMessage(m.ID, CodeToolDenied, fmt.Sprintf("tool %s is not allowed for this key on server %s", tool, name)))
-			audit(m, tool, "denied", 200, start)
-			continue
-		}
-		if rp := principal.Key.Run; rp != nil && runID != "" && p.d.Runs != nil && agentrun.RunIDPattern.MatchString(runID) {
-			fp := "mcp:" + name + ":" + tool + ":" + agentrun.Normalize(string(args))
-			res, err := p.d.Runs.Step(r.Context(), principal.TenantID, runID, rp.WithDefaults(), fp, 0, 0)
-			if err == nil && res.Status != agentrun.Allowed {
-				refused = append(refused, ErrorMessage(m.ID, CodeRunLimit, "run limit reached or loop detected for run "+runID))
-				audit(m, tool, "run_limit", 200, start)
+		if isCall {
+			if !Allowed(principal.Key.MCP, name, tool) {
+				refused = append(refused, ErrorMessage(m.ID, CodeToolDenied, fmt.Sprintf("tool %s is not allowed for this key on server %s", tool, name)))
+				p.d.Audit(Audit{
+					TS:        start,
+					TenantID:  principal.TenantID,
+					KeyID:     principal.KeyID,
+					Server:    name,
+					Method:    m.Method,
+					Tool:      tool,
+					RunID:     runID,
+					Decision:  "denied",
+					Status:    http.StatusOK,
+					LatencyMs: uint32(time.Since(start).Milliseconds()),
+				})
 				continue
 			}
+			if rp := principal.Key.Run; rp != nil && runID != "" && p.d.Runs != nil && agentrun.RunIDPattern.MatchString(runID) {
+				fp := "mcp:" + name + ":" + tool + ":" + agentrun.Normalize(string(args))
+				res, err := p.d.Runs.Step(r.Context(), principal.TenantID, runID, rp.WithDefaults(), fp, 0, 0)
+				if err == nil && res.Status != agentrun.Allowed {
+					refused = append(refused, ErrorMessage(m.ID, CodeRunLimit, "run limit reached or loop detected for run "+runID))
+					p.d.Audit(Audit{
+						TS:        start,
+						TenantID:  principal.TenantID,
+						KeyID:     principal.KeyID,
+						Server:    name,
+						Method:    m.Method,
+						Tool:      tool,
+						RunID:     runID,
+						Decision:  "run_limit",
+						Status:    http.StatusOK,
+						LatencyMs: uint32(time.Since(start).Milliseconds()),
+					})
+					continue
+				}
+			}
 		}
-		audit(m, tool, "allowed", 200, start)
 	}
 	if len(refused) > 0 {
 		writeRefusal(w, msgs, refused, batch)
 		return
 	}
-	p.passthrough(w, r, up, &filterSpec{body: body, listIDs: listIDs, allow: func(t string) bool { return Allowed(principal.Key.MCP, name, t) }})
+
+	filter := &filterSpec{
+		body:    body,
+		listIDs: listIDs,
+		allow:   func(t string) bool { return Allowed(principal.Key.MCP, name, t) },
+	}
+	p.passthrough(w, r, up, filter, func(status int, filtered bool) {
+		latencyMs := uint32(time.Since(start).Milliseconds())
+		for _, m := range msgs {
+			tool, _, _ := ToolCall(m)
+			dec := "allowed"
+			if m.Method == "tools/list" && filtered {
+				dec = "filtered"
+			}
+			p.d.Audit(Audit{
+				TS:        start,
+				TenantID:  principal.TenantID,
+				KeyID:     principal.KeyID,
+				Server:    name,
+				Method:    m.Method,
+				Tool:      tool,
+				RunID:     runID,
+				Decision:  dec,
+				Status:    status,
+				LatencyMs: latencyMs,
+			})
+		}
+	})
 }
 
 func writeRefusal(w http.ResponseWriter, msgs, refused []Message, batch bool) {
@@ -176,24 +250,28 @@ type filterSpec struct {
 	allow   func(string) bool
 }
 
-func (f *filterSpec) apply(data []byte) []byte {
+func (f *filterSpec) apply(data []byte) ([]byte, bool) {
 	if f == nil || len(f.listIDs) == 0 {
-		return data
+		return data, false
 	}
 	msgs, batch, err := Parse(data)
 	if err != nil {
-		return data
+		return data, false
 	}
 	changed := false
+	anyFiltered := false
 	for i, m := range msgs {
 		if f.listIDs[string(m.ID)] && len(m.Result) > 0 {
-			if out, err := FilterToolsList(m.Result, f.allow); err == nil {
+			if out, didFilter, err := FilterToolsList(m.Result, f.allow); err == nil {
 				msgs[i].Result, changed = out, true
+				if didFilter {
+					anyFiltered = true
+				}
 			}
 		}
 	}
 	if !changed {
-		return data
+		return data, false
 	}
 	var b []byte
 	if batch {
@@ -201,10 +279,10 @@ func (f *filterSpec) apply(data []byte) []byte {
 	} else {
 		b, _ = json.Marshal(msgs[0])
 	}
-	return b
+	return b, anyFiltered
 }
 
-func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, up Upstream, f *filterSpec) {
+func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, up Upstream, f *filterSpec, onComplete func(status int, filtered bool)) {
 	var body []byte
 	if f != nil {
 		body = f.body
@@ -212,6 +290,9 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, up Upstream,
 	resp, err := p.forward(r, up, body)
 	if err != nil {
 		slog.Warn("mcp upstream failed", "server", up.Name, "err", err)
+		if onComplete != nil {
+			onComplete(http.StatusBadGateway, false)
+		}
 		api.WriteError(w, api.Upstream("MCP server unavailable"))
 		return
 	}
@@ -224,25 +305,44 @@ func (p *Proxy) passthrough(w http.ResponseWriter, r *http.Request, up Upstream,
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 		sw, err := sse.NewWriter(w)
 		if err != nil {
+			if onComplete != nil {
+				onComplete(resp.StatusCode, false)
+			}
 			return
 		}
 		rd := sse.NewReader(resp.Body)
+		anyFiltered := false
 		for {
 			ev, err := rd.Next()
 			if err != nil {
-				return
+				break
 			}
-			ev.Data = f.apply(ev.Data)
+			var didFilter bool
+			ev.Data, didFilter = f.apply(ev.Data)
+			if didFilter {
+				anyFiltered = true
+			}
 			if sw.Event(ev) != nil {
-				return
+				break
 			}
 		}
+		if onComplete != nil {
+			onComplete(resp.StatusCode, anyFiltered)
+		}
+		return
 	}
 	w.WriteHeader(resp.StatusCode)
 	if f != nil && len(f.listIDs) > 0 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-		_, _ = w.Write(f.apply(b))
+		out, didFilter := f.apply(b)
+		_, _ = w.Write(out)
+		if onComplete != nil {
+			onComplete(resp.StatusCode, didFilter)
+		}
 		return
 	}
 	_, _ = io.Copy(w, resp.Body)
+	if onComplete != nil {
+		onComplete(resp.StatusCode, false)
+	}
 }

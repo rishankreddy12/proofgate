@@ -26,8 +26,9 @@ func TestParseAndToolCall(t *testing.T) {
 
 func TestFilterToolsList(t *testing.T) {
 	in := json.RawMessage(`{"tools":[{"name":"get_file","inputSchema":{}},{"name":"delete_repo"}],"nextCursor":"c2"}`)
-	out, err := FilterToolsList(in, func(n string) bool { return n == "get_file" })
+	out, filtered, err := FilterToolsList(in, func(n string) bool { return n == "get_file" })
 	require.NoError(t, err)
+	require.True(t, filtered)
 	require.JSONEq(t, `{"tools":[{"name":"get_file","inputSchema":{}}],"nextCursor":"c2"}`, string(out))
 }
 
