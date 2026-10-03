@@ -1,3 +1,4 @@
+// Package health provides enterprise-grade capabilities, configuration, and structural components for the health subsystem.
 package health
 
 import (
@@ -11,12 +12,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// peerHealthPayload encapsulates the serialized payload broadcast to Redis for cross-replica sharing.
 type peerHealthPayload struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Stats     Stats     `json:"stats"`
 }
 
 // RedisHealth coordinates cross-replica health metrics exchange via Redis hashes.
+// It serves as an alternative to the UDP-based Gossip mechanism, ideal for deployments spanning
+// multiple regions or Kubernetes clusters where UDP multicast/broadcast is strictly firewalled.
 type RedisHealth struct {
 	rdb       redis.UniversalClient
 	replicaID string

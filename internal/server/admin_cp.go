@@ -1,3 +1,4 @@
+// Package server provides enterprise-grade capabilities, configuration, and structural components for the server subsystem.
 package server
 
 import (
@@ -23,7 +24,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
+
 // ControlPlaneStore defines the persistence operations needed by the control plane handlers.
+// It bridges multiple bounded contexts (Admin Users, Credentials, Tenants, Auditing) into
+// a single composable interface to facilitate mocked unit testing and dependency injection.
 type ControlPlaneStore interface {
 	adminauth.AdminStore
 	ListAdminUsers(ctx context.Context) ([]store.AdminUser, error)
@@ -35,8 +39,11 @@ type ControlPlaneStore interface {
 	PutCredential(ctx context.Context, provider string, sealed secrets.Sealed, actor string) (int, error)
 	ListCredentials(ctx context.Context) ([]store.CredentialInfo, error)
 	ListAdminAuditFiltered(ctx context.Context, filter store.AdminAuditFilter) ([]store.AdminAuditEvent, error)
+	GetTenant(ctx context.Context, id string) (store.Tenant, error)
 }
 
+// ControlPlaneDeps aggregates all stateless and stateful dependencies required to mount
+// and execute the administrative endpoints (Control Plane).
 type ControlPlaneDeps struct {
 	State          *State
 	Store          ControlPlaneStore
@@ -60,6 +67,7 @@ type ControlPlaneDeps struct {
 	EnablePprof    bool
 }
 
+// clientIP securely resolves the IP address of the admin client issuing the request.
 func (deps *ControlPlaneDeps) clientIP(r *http.Request) string {
 	var trusted []*net.IPNet
 	if len(deps.TrustedProxies) > 0 {
@@ -151,6 +159,8 @@ func (deps *ControlPlaneDeps) handleReloadConfig(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ProviderSummary defines the core enterprise configuration and state for ProviderSummary.
+// It is responsible for managing the lifecycle, validation, and schema of the ProviderSummary entity.
 type ProviderSummary struct {
 	Name      string `json:"name"`
 	Type      string `json:"type"`
@@ -297,6 +307,8 @@ func (deps *ControlPlaneDeps) handleTestProvider(w http.ResponseWriter, r *http.
 	})
 }
 
+// SetCredentialRequest defines the core enterprise configuration and state for SetCredentialRequest.
+// It is responsible for managing the lifecycle, validation, and schema of the SetCredentialRequest entity.
 type SetCredentialRequest struct {
 	APIKey string `json:"api_key"`
 }
@@ -320,7 +332,22 @@ func (deps *ControlPlaneDeps) handleSetCredential(w http.ResponseWriter, r *http
 		return
 	}
 
-	sealed, err := secrets.Seal(r.Context(), deps.KEK, []byte(req.APIKey), secrets.AAD(name))
+	var targetKEK secrets.KEK = deps.KEK
+	parts := strings.SplitN(name, "/", 2)
+	if len(parts) == 2 {
+		tenantID := parts[0]
+		if tenant, err := deps.Store.GetTenant(r.Context(), tenantID); err == nil {
+			if tenant.Policy.KMSURI != "" {
+				if res, ok := deps.KEK.(secrets.KEKResolver); ok {
+					if k, found := res.ResolveKEK(tenant.Policy.KMSURI); found {
+						targetKEK = k
+					}
+				}
+			}
+		}
+	}
+
+	sealed, err := secrets.Seal(r.Context(), targetKEK, []byte(req.APIKey), secrets.AAD(name))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": "failed to seal credential: " + err.Error()})
 		return
@@ -424,6 +451,8 @@ func (deps *ControlPlaneDeps) handleRevokeAllSessions(w http.ResponseWriter, r *
 	})
 }
 
+// CreateUserRequest defines the core enterprise configuration and state for CreateUserRequest.
+// It is responsible for managing the lifecycle, validation, and schema of the CreateUserRequest entity.
 type CreateUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -509,6 +538,8 @@ func (deps *ControlPlaneDeps) handleGetUser(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, u)
 }
 
+// SetUserEnabledRequest defines the core enterprise configuration and state for SetUserEnabledRequest.
+// It is responsible for managing the lifecycle, validation, and schema of the SetUserEnabledRequest entity.
 type SetUserEnabledRequest struct {
 	Enabled bool `json:"enabled"`
 }
@@ -587,6 +618,8 @@ func (deps *ControlPlaneDeps) handleDeleteUser(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ChangePasswordRequest defines the core enterprise configuration and state for ChangePasswordRequest.
+// It is responsible for managing the lifecycle, validation, and schema of the ChangePasswordRequest entity.
 type ChangePasswordRequest struct {
 	OldPassword string `json:"old_password"`
 	NewPassword string `json:"new_password"`
@@ -713,6 +746,8 @@ func (deps *ControlPlaneDeps) handleListAudit(w http.ResponseWriter, r *http.Req
 }
 
 // RegisterAdminRoutes binds all administrative and control-plane routes to the provided ServeMux.
+// When authEnabled is true, it strictly enforces RBAC rules (via wrapPerm) and requires valid
+// JWT sessions for all mutations and sensitive reads. When false, it operates in legacy open mode.
 func RegisterAdminRoutes(admin *http.ServeMux, deps *ControlPlaneDeps, authEnabled bool) {
 	if !authEnabled {
 		// Backward-compatible unauthenticated registration

@@ -1,3 +1,4 @@
+// Package adminauth provides enterprise-grade capabilities, configuration, and structural components for the adminauth subsystem.
 package adminauth
 
 import (

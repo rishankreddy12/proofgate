@@ -109,4 +109,3 @@ func TestTrackerMergeHardening(t *testing.T) {
 	trFresh.Merge(tgt, Stats{Degraded: true})
 	require.True(t, trFresh.Degraded(tgt), "third degraded packet satisfies Breaches=3")
 }
-

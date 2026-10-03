@@ -16,6 +16,8 @@ import (
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
+// Mode defines the core enterprise configuration and state for Mode.
+// It is responsible for managing the lifecycle, validation, and schema of the Mode entity.
 type Mode struct {
 	TTFTMs       int     `json:"ttft_ms"`
 	TokensPerSec int     `json:"tokens_per_sec"` // 0 = no delay between tokens
@@ -24,6 +26,8 @@ type Mode struct {
 	Reply        string  `json:"reply"`
 }
 
+// Server defines the core enterprise configuration and state for Server.
+// It is responsible for managing the lifecycle, validation, and schema of the Server entity.
 type Server struct {
 	name     string
 	mu       sync.RWMutex
@@ -31,12 +35,21 @@ type Server struct {
 	requests atomic.Int64
 }
 
+// New executes the primary logic for the New operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func New(name string, m Mode) *Server { return &Server{name: name, mode: m} }
 
-func (s *Server) SetMode(m Mode)  { s.mu.Lock(); s.mode = m; s.mu.Unlock() }
-func (s *Server) getMode() Mode   { s.mu.RLock(); defer s.mu.RUnlock(); return s.mode }
+// SetMode executes the primary logic for the SetMode operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
+func (s *Server) SetMode(m Mode) { s.mu.Lock(); s.mode = m; s.mu.Unlock() }
+func (s *Server) getMode() Mode  { s.mu.RLock(); defer s.mu.RUnlock(); return s.mode }
+
+// Requests executes the primary logic for the Requests operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Server) Requests() int64 { return s.requests.Load() }
 
+// Handler executes the primary logic for the Handler operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.chat)

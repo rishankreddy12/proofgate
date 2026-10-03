@@ -61,3 +61,24 @@ func TestPII_MaskMode_NonReversible(t *testing.T) {
 	restored := Restore(res.Redacted, res.Mapping)
 	require.Equal(t, "User [REDACTED:EMAIL] with IP [REDACTED:IPV4] connected.", restored)
 }
+
+func FuzzRedactRestore(f *testing.F) {
+	f.Add("Send invoice to user@example.com, card 4111-1111-1111-1111.")
+	f.Add("Normal text without any PII data whatsoever.")
+	f.Add("Multiple emails: a@b.com c@d.org e@f.net")
+	f.Add("Edge: <EMAIL_1> literal placeholder text")
+	f.Add("")
+	f.Fuzz(func(t *testing.T, text string) {
+		matches := DetectPII(text)
+		res := Redact(text, matches, "redact")
+		restored := Restore(res.Redacted, res.Mapping)
+		if len(matches) == 0 {
+			// No PII → text must be unchanged through the round-trip
+			require.Equal(t, text, restored)
+		}
+		// In all cases, restored text must not contain any active placeholders
+		for ph := range res.Mapping {
+			require.NotContains(t, restored, ph, "placeholder %q not restored", ph)
+		}
+	})
+}

@@ -85,3 +85,54 @@ jobs:
         with:
           name: first-run-results
           path: bench/results/first-run.json
+
+  perf-gate:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+      - name: Benchmark PR branch
+        run: go test -bench=. -benchmem -count=5 -run=^$ ./internal/sse/... ./internal/guard/... > /tmp/pr.txt
+      - name: Benchmark main branch
+        run: |
+          git stash
+          git checkout origin/main -- .
+          go test -bench=. -benchmem -count=5 -run=^$ ./internal/sse/... ./internal/guard/... > /tmp/main.txt || true
+          git checkout -
+          git stash pop || true
+      - name: Compare with benchstat
+        run: |
+          echo "=== Benchmark comparison ==="
+          benchstat /tmp/main.txt /tmp/pr.txt | tee /tmp/benchstat.txt
+          # Fail on >10% regression in any benchmark
+          if grep -qE '\+[1-9][0-9]\.[0-9]+%' /tmp/benchstat.txt; then
+            echo "::error::Significant performance regression detected (>10%)"
+            exit 1
+          fi
+          echo "✅ No significant regressions detected."
+
+  fuzz-seed:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run fuzz tests with seed corpus
+        run: |
+          go test -fuzz=FuzzReader -fuzztime=10s ./internal/sse/...
+          go test -fuzz=FuzzParse -fuzztime=10s ./internal/mcpproxy/...
+          go test -fuzz=FuzzRedactRestore -fuzztime=10s ./internal/guard/...
+          go test -fuzz=FuzzParse -fuzztime=10s ./internal/config/...
+          go test -fuzz=FuzzMergeMessage -fuzztime=10s ./internal/health/...

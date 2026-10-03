@@ -1,3 +1,4 @@
+// Package router provides enterprise-grade capabilities, configuration, and structural components for the router subsystem.
 package router
 
 import (
@@ -11,11 +12,13 @@ import (
 	"github.com/proofgate/proofgate/internal/provider"
 )
 
+// Attempt represents a single execution of an upstream provider call against a specific target.
 type Attempt func(ctx context.Context, t Target) error
 
+// Result encapsulates the outcome of a routing execution.
 type Result struct {
-	Target   Target
-	Attempts int
+	Target   Target // The provider/model that ultimately serviced the request
+	Attempts int    // Total number of tries (including retries/failovers)
 }
 
 var sleep = func(ctx context.Context, d time.Duration) error {
@@ -29,7 +32,8 @@ var sleep = func(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// backoff is "full jitter": uniform in [0, min(2s, base*2^n)].
+// backoff calculates "Full Jitter" exponential backoff for retries to prevent thundering herds.
+// Formula: uniform_random(0, min(ceiling, base * 2^attempt))
 func backoff(base time.Duration, n int) time.Duration {
 	ceiling := min(base<<n, 2*time.Second)
 	if ceiling <= 0 {
@@ -46,6 +50,9 @@ const (
 	nextTarget
 )
 
+// classify evaluates an error from an Attempt to determine the Gateway's next move.
+// It returns a routing decision and a boolean indicating whether the error should
+// trip the Circuit Breaker for that target.
 func classify(err error) (decision, bool /*breaker failure*/) {
 	var pe *provider.Error
 	if !errors.As(err, &pe) {
@@ -67,7 +74,9 @@ func classify(err error) (decision, bool /*breaker failure*/) {
 	}
 }
 
-// Execute runs fn over the plan following the failover rules in the plan document.
+// Execute orchestrates the physical network calls over the computed routing plan.
+// It processes the target list in order, applying retry logic, exponential backoff,
+// circuit breaking, and cross-provider failover as dictated by error classification.
 func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, deadline time.Duration, fn Attempt) (Result, error) {
 	var res Result
 	var lastErr error = api.NoHealthyTarget()
@@ -97,7 +106,7 @@ func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, d
 	for ti, t := range plan {
 		isLast := ti == len(plan)-1
 		if br != nil && !br.Allow(t) && !isLast {
-			continue
+			continue // Skip tripped targets unless it's the absolute last resort
 		}
 		for n := 0; n < maxAttempts; n++ {
 			if err := checkCtx(); err != nil {
@@ -113,6 +122,8 @@ func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, d
 				return res, nil
 			}
 			lastErr = err
+
+			// Detect HTTP 429 Retry-After headers from the provider
 			var pe *provider.Error
 			if errors.As(err, &pe) {
 				if pe.RetryAfter > 0 {
@@ -127,6 +138,7 @@ func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, d
 			if err := checkCtx(); err != nil {
 				return res, err
 			}
+
 			d, breakerFail := classify(err)
 			if breakerFail && br != nil {
 				br.Failure(t)
@@ -144,6 +156,9 @@ func Execute(ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, d
 			}
 		}
 	}
+
+	// Inject the shortest observed Retry-After into the final surfaced error
+	// so the downstream client can throttle appropriately.
 	if shortestRetryAfter > 0 {
 		var pe *provider.Error
 		var ae *api.Error

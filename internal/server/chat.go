@@ -1,3 +1,4 @@
+// Package server provides enterprise-grade capabilities, configuration, and structural components for the server subsystem.
 package server
 
 import (
@@ -19,6 +20,10 @@ import (
 
 const defaultMaxBody = 10 << 20
 
+// Handlers centralizes all state and dependencies required by the HTTP handlers.
+// It encapsulates reference pointers to caching, rate-limiting, hedging, and
+// routing subsystems, ensuring that the request lifecycle can be executed without
+// relying on global singletons.
 type Handlers struct {
 	State               *State
 	Breakers            *router.Breakers
@@ -34,6 +39,8 @@ type Handlers struct {
 	MaxRequestBodyBytes int64
 }
 
+// maxBody returns the configured maximum bytes for an incoming request payload,
+// falling back to a safe 10MB default to prevent memory exhaustion attacks.
 func (h *Handlers) maxBody() int64 {
 	if h != nil && h.MaxRequestBodyBytes > 0 {
 		return h.MaxRequestBodyBytes
@@ -41,6 +48,9 @@ func (h *Handlers) maxBody() int64 {
 	return defaultMaxBody
 }
 
+// hedgeBudget retrieves or initializes the concurrency tokens (HedgeBudget) for a given route.
+// This ensures that tail-latency hedging mechanisms do not overwhelm upstream providers
+// by strictly capping the global ratio of in-flight hedged requests.
 func (h *Handlers) hedgeBudget(r *router.Route) *router.HedgeBudget {
 	if r == nil {
 		return nil
@@ -57,6 +67,8 @@ func (h *Handlers) hedgeBudget(r *router.Route) *router.HedgeBudget {
 	return v.(*router.HedgeBudget)
 }
 
+// decodeChat parses and validates the incoming JSON payload into an api.ChatRequest.
+// It strictly enforces MaxBytesReader limits to mitigate slow-loris and OOM vectors.
 func decodeChat(r *http.Request, maxBody int64) (*api.ChatRequest, error) {
 	var req api.ChatRequest
 	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBody)).Decode(&req); err != nil {
@@ -77,7 +89,8 @@ func decodeChat(r *http.Request, maxBody int64) (*api.ChatRequest, error) {
 	return &req, nil
 }
 
-// resolveRoute applies the key's route permissions.
+// resolveRoute verifies that the incoming request is authorized to traverse the
+// requested routing path, evaluating tenant-level RBAC policies against the route schema.
 func resolveRoute(rt *Runtime, p auth.Principal, model string, embeddings bool) (*router.Route, error) {
 	route, err := rt.Router.Resolve(model, p.AllowDirect)
 	if err != nil {
@@ -103,6 +116,8 @@ var clientHeaders = []string{
 	"X-ProofGate-Target",
 }
 
+// sanitizeIncoming strips out potentially dangerous or sensitive internal HTTP headers,
+// preserving only explicitly permitted ProofGate-specific control headers.
 func sanitizeIncoming(h http.Header) http.Header {
 	out := make(http.Header, len(clientHeaders))
 	for _, k := range clientHeaders {
@@ -113,45 +128,65 @@ func sanitizeIncoming(h http.Header) http.Header {
 	return out
 }
 
+// Chat is the primary entrypoint for the /v1/chat/completions endpoint.
+// It orchestrates the end-to-end request lifecycle:
+// 1. Decodes and validates the payload.
+// 2. Resolves route permissions.
+// 3. Initializes the pipeline.Call structure.
+// 4. Invokes the pre-flight pipeline stages (Auth, Cache, Guardrails).
+// 5. Branches into streaming (serveStream) or monolithic (execChat) upstream execution.
+// 6. Executes post-flight pipeline stages (Telemetry, Ledger).
 func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	rt := h.State.Load()
 	p, _ := auth.FromContext(r.Context())
+
 	req, err := decodeChat(r, h.maxBody())
 	if err != nil {
 		api.WriteError(w, err)
 		return
 	}
+
 	route, err := resolveRoute(rt, p, req.Model, false)
 	if err != nil {
 		api.WriteError(w, err)
 		return
 	}
+
 	c := pipeline.NewCall(p, req, route)
 	if r.Header.Get("X-ProofGate-Internal") != "" {
 		h.Metrics.ObserveSpoofedInternal(p.TenantID)
 	}
 	c.Incoming = sanitizeIncoming(r.Header)
+
 	ctx := r.Context()
+
+	// Execute Pipeline Before-Stage (e.g., semantic cache hit)
 	handled, err := h.Pipeline.Before(ctx, c)
+
 	if err == nil && req.Stream {
+		// Hand off to the streaming responder
 		h.serveStream(w, r, rt, c, handled)
 		return
 	}
+
 	if err == nil && !handled {
+		// Execute synchronous upstream network call
 		err = upstreamError(h.execChat(ctx, rt, c))
 		if err == nil && ctx.Err() != nil {
-			c.Err = ctx.Err() // client left; nothing to write
+			c.Err = ctx.Err() // client disconnected prematurely
 			h.Pipeline.After(ctx, c)
 			return
 		}
 	}
+
 	c.Err = err
 	c.Latency = time.Since(c.Start)
+
 	writeCallHeaders(w, c)
 	if err != nil {
 		api.WriteError(w, err)
 	} else {
-		h.Pipeline.Respond(ctx, c)
+		h.Pipeline.Respond(ctx, c) // Execute Pipeline Respond-Stage
 		respToWrite := c.Response
 		if c.ClientResponse != nil {
 			respToWrite = c.ClientResponse
@@ -159,5 +194,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-ProofGate-Cost-USD", usd(c.CostMicros))
 		writeJSON(w, http.StatusOK, respToWrite)
 	}
+
+	// Execute Pipeline After-Stage (e.g., write-behind cache, analytics emission)
 	h.Pipeline.After(ctx, c)
 }

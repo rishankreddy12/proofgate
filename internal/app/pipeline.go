@@ -19,18 +19,19 @@ import (
 // Deps bundles the concrete dependencies that each pipeline stage needs.
 // main.go constructs these once and passes them here.
 type Deps struct {
-	Metrics        *telemetry.Metrics
-	UsageEmit      func(analytics.UsageEvent) bool
-	Runs           agentrun.Store
-	FuzzyDetector  *agentrun.FuzzyDetector
-	DefaultMaxToks int
-	CacheStage     *cache.Stage
-	Limiter        ratelimit.Backend
-	MaxTokReserve  int
-	FailOpenInc    func()
-	Ledger         budget.Ledger
-	Pricing        *budget.Pricing
-	BudgetCfg      config.BudgetConfig
+	Metrics           *telemetry.Metrics
+	UsageEmit         func(analytics.UsageEvent) bool
+	Runs              agentrun.Store
+	FuzzyDetector     *agentrun.FuzzyDetector
+	DefaultMaxToks    int
+	CacheStage        *cache.Stage
+	Limiter           ratelimit.Backend
+	MaxTokReserve     int
+	FailOpenInc       func()
+	Ledger            budget.Ledger
+	Pricing           *budget.Pricing
+	BudgetCfg         config.BudgetConfig
+	BudgetFailOpenInc func()
 }
 
 // StageOrder defines the canonical pipeline stage names in execution order.
@@ -61,6 +62,7 @@ func BuildPipeline(d Deps) *pipeline.Pipeline {
 			ReserveStrict:  d.BudgetCfg.IsReserveStrict(),
 			RequirePricing: d.BudgetCfg.IsRequirePricing(),
 			DefaultMax:     d.DefaultMaxToks,
+			OnFailOpen:     d.BudgetFailOpenInc,
 		}),
 		guard.NewStage(),
 		d.CacheStage,

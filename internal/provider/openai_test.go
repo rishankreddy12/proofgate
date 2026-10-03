@@ -140,4 +140,3 @@ func TestOpenAIRetryAfterHeader(t *testing.T) {
 	require.Equal(t, 429, pe.Status)
 	require.Equal(t, 45*time.Second, pe.RetryAfter)
 }
-

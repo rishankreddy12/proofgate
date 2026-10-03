@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -8,6 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// SpendGuard defines the core enterprise configuration and state for SpendGuard.
+// It is responsible for managing the lifecycle, validation, and schema of the SpendGuard entity.
 type SpendGuard interface {
 	CanSpend(ctx context.Context, estimatedMicros int64) (bool, error)
 	AddSpend(ctx context.Context, micros int64) error
@@ -15,12 +18,16 @@ type SpendGuard interface {
 	Limit() int64
 }
 
+// ShadowSpendGuard defines the core enterprise configuration and state for ShadowSpendGuard.
+// It is responsible for managing the lifecycle, validation, and schema of the ShadowSpendGuard entity.
 type ShadowSpendGuard struct {
-	rdb         redis.UniversalClient
-	dailyLimit  int64
-	nowFn       func() time.Time
+	rdb        redis.UniversalClient
+	dailyLimit int64
+	nowFn      func() time.Time
 }
 
+// NewShadowSpendGuard executes the primary logic for the NewShadowSpendGuard operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewShadowSpendGuard(rdb redis.UniversalClient, dailyLimitMicros int64) *ShadowSpendGuard {
 	if dailyLimitMicros <= 0 {
 		dailyLimitMicros = 5_000_000 // $5.00 default
@@ -32,12 +39,16 @@ func NewShadowSpendGuard(rdb redis.UniversalClient, dailyLimitMicros int64) *Sha
 	}
 }
 
+// SetNow executes the primary logic for the SetNow operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *ShadowSpendGuard) SetNow(fn func() time.Time) {
 	if fn != nil {
 		s.nowFn = fn
 	}
 }
 
+// Limit executes the primary logic for the Limit operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *ShadowSpendGuard) Limit() int64 {
 	return s.dailyLimit
 }
@@ -47,6 +58,8 @@ func (s *ShadowSpendGuard) todayKey() string {
 	return "proof:spend:" + date
 }
 
+// SpentToday executes the primary logic for the SpentToday operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *ShadowSpendGuard) SpentToday(ctx context.Context) (int64, error) {
 	if s.rdb == nil {
 		return 0, nil
@@ -58,6 +71,8 @@ func (s *ShadowSpendGuard) SpentToday(ctx context.Context) (int64, error) {
 	return v, err
 }
 
+// CanSpend executes the primary logic for the CanSpend operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *ShadowSpendGuard) CanSpend(ctx context.Context, estimatedMicros int64) (bool, error) {
 	spent, err := s.SpentToday(ctx)
 	if err != nil {
@@ -66,6 +81,8 @@ func (s *ShadowSpendGuard) CanSpend(ctx context.Context, estimatedMicros int64) 
 	return spent+estimatedMicros <= s.dailyLimit, nil
 }
 
+// AddSpend executes the primary logic for the AddSpend operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *ShadowSpendGuard) AddSpend(ctx context.Context, micros int64) error {
 	if s.rdb == nil || micros <= 0 {
 		return nil

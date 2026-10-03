@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+// Batcher defines the core enterprise configuration and state for Batcher.
+// It is responsible for managing the lifecycle, validation, and schema of the Batcher entity.
 type Batcher[T any] struct {
 	name     string
 	ch       chan T
@@ -22,6 +24,8 @@ type Batcher[T any] struct {
 	finalErr error
 }
 
+// NewBatcher executes the primary logic for the NewBatcher operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewBatcher[T any](name string, capacity, maxBatch int, interval time.Duration,
 	flush func(context.Context, []T) error, onDrop func()) *Batcher[T] {
 	if onDrop == nil {

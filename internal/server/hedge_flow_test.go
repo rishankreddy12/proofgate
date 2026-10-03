@@ -40,4 +40,3 @@ func TestHedgedUnaryUsesFasterTarget(t *testing.T) {
 	require.Equal(t, "b/large", resp.Header.Get("X-ProofGate-Target"))
 	require.Less(t, time.Since(start), 600*time.Millisecond)
 }
-

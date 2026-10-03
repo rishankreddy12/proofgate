@@ -60,9 +60,9 @@ func WithTransport(rt http.RoundTripper) Option {
 }
 
 // New returns an http.Client configured with safe defaults:
-// - CheckRedirect is set to http.ErrUseLastResponse so redirects are returned to the caller rather
-//   than followed automatically (preventing credential leakage of headers like x-api-key across domains).
-// - DefaultTransport() is used with pooled connections and explicit dial/TLS timeouts.
+//   - CheckRedirect is set to http.ErrUseLastResponse so redirects are returned to the caller rather
+//     than followed automatically (preventing credential leakage of headers like x-api-key across domains).
+//   - DefaultTransport() is used with pooled connections and explicit dial/TLS timeouts.
 func New(opts ...Option) *http.Client {
 	c := &http.Client{
 		Transport: DefaultTransport(),
@@ -93,6 +93,8 @@ func LimitReader(r io.Reader, limit int64) io.Reader {
 	return &limitReader{r: r, limit: limit}
 }
 
+// Read executes the primary logic for the Read operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *limitReader) Read(p []byte) (int, error) {
 	if l.read >= l.limit {
 		var check [1]byte

@@ -1,3 +1,4 @@
+// Package guard provides enterprise-grade capabilities, configuration, and structural components for the guard subsystem.
 package guard
 
 import (
@@ -22,6 +23,8 @@ type StreamRestorer struct {
 	buffer  string
 }
 
+// NewStreamRestorer executes the primary logic for the NewStreamRestorer operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewStreamRestorer(mapping map[string]string) *StreamRestorer {
 	return &StreamRestorer{
 		mapping: mapping,
@@ -30,6 +33,8 @@ func NewStreamRestorer(mapping map[string]string) *StreamRestorer {
 
 const maxPlaceholderLen = 40
 
+// Process executes the primary logic for the Process operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *StreamRestorer) Process(chunk string) string {
 	if len(s.mapping) == 0 {
 		return chunk
@@ -78,6 +83,8 @@ func (s *StreamRestorer) Process(chunk string) string {
 	return out.String()
 }
 
+// Flush executes the primary logic for the Flush operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *StreamRestorer) Flush() string {
 	if len(s.buffer) == 0 {
 		return ""

@@ -10,12 +10,16 @@ import (
 	"fmt"
 )
 
+// KEK defines the core enterprise configuration and state for KEK.
+// It is responsible for managing the lifecycle, validation, and schema of the KEK entity.
 type KEK interface {
 	ID() string
 	Wrap(ctx context.Context, dek []byte) ([]byte, error)
 	Unwrap(ctx context.Context, wrapped []byte) ([]byte, error)
 }
 
+// Sealed defines the core enterprise configuration and state for Sealed.
+// It is responsible for managing the lifecycle, validation, and schema of the Sealed entity.
 type Sealed struct {
 	KEKID      string
 	WrappedDEK []byte
@@ -23,6 +27,8 @@ type Sealed struct {
 	Ciphertext []byte
 }
 
+// AAD executes the primary logic for the AAD operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func AAD(provider string) []byte { return []byte("proofgate:provider:" + provider) }
 
 func gcm(key []byte) (cipher.AEAD, error) {
@@ -39,6 +45,8 @@ func zero(b []byte) {
 	}
 }
 
+// Seal executes the primary logic for the Seal operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Seal(ctx context.Context, kek KEK, plaintext, aad []byte) (Sealed, error) {
 	dek := make([]byte, 32)
 	if _, err := rand.Read(dek); err != nil {
@@ -65,6 +73,8 @@ type KEKResolver interface {
 	ResolveKEK(id string) (KEK, bool)
 }
 
+// Open executes the primary logic for the Open operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Open(ctx context.Context, kek KEK, s Sealed, aad []byte) ([]byte, error) {
 	targetKEK := kek
 	if s.KEKID != kek.ID() {
@@ -94,6 +104,8 @@ func Open(ctx context.Context, kek KEK, s Sealed, aad []byte) ([]byte, error) {
 	return pt, nil
 }
 
+// Rewrap executes the primary logic for the Rewrap operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Rewrap(ctx context.Context, from, to KEK, s Sealed) (Sealed, error) {
 	fromKEK := from
 	if s.KEKID != from.ID() {

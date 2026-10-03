@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -5,6 +6,8 @@ import (
 	"time"
 )
 
+// Record defines the core enterprise configuration and state for Record.
+// It is responsible for managing the lifecycle, validation, and schema of the Record entity.
 type Record struct {
 	Start  time.Duration
 	TTFT   time.Duration
@@ -13,6 +16,8 @@ type Record struct {
 	Target string
 }
 
+// Percentiles defines the core enterprise configuration and state for Percentiles.
+// It is responsible for managing the lifecycle, validation, and schema of the Percentiles entity.
 type Percentiles struct {
 	P50  float64 `json:"p50_ms"`
 	P90  float64 `json:"p90_ms"`
@@ -21,6 +26,8 @@ type Percentiles struct {
 	Mean float64 `json:"mean_ms"`
 }
 
+// Summary defines the core enterprise configuration and state for Summary.
+// It is responsible for managing the lifecycle, validation, and schema of the Summary entity.
 type Summary struct {
 	Label    string         `json:"label"`
 	URL      string         `json:"url"`
@@ -37,6 +44,8 @@ type Summary struct {
 	Meta     map[string]any `json:"meta"`
 }
 
+// Pcts executes the primary logic for the Pcts operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Pcts(ds []time.Duration) Percentiles {
 	if len(ds) == 0 {
 		return Percentiles{}
@@ -60,6 +69,8 @@ func Pcts(ds []time.Duration) Percentiles {
 	}
 }
 
+// Summarize executes the primary logic for the Summarize operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Summarize(recs []Record, label, url, route string, rps float64, dur time.Duration, meta map[string]any) Summary {
 	s := Summary{
 		Label:    label,

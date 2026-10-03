@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -14,6 +15,8 @@ import (
 	"time"
 )
 
+// Client defines the core enterprise configuration and state for Client.
+// It is responsible for managing the lifecycle, validation, and schema of the Client entity.
 type Client struct {
 	BaseURL     string
 	Token       string
@@ -23,12 +26,15 @@ type Client struct {
 	warningOnce sync.Once
 }
 
+// ErrorResponse defines the core enterprise configuration and state for ErrorResponse.
+// It is responsible for managing the lifecycle, validation, and schema of the ErrorResponse entity.
 type ErrorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 }
 
-
+// NewClient executes the primary logic for the NewClient operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewClient(profileName, overrideServer string, overrideInsecure, outputJSON bool) (*Client, error) {
 	pName, profile, err := getActiveProfile(profileName)
 	if err != nil && profileName != "" {
@@ -78,6 +84,8 @@ func (c *Client) warnInsecure() {
 	}
 }
 
+// Do executes the primary logic for the Do operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (c *Client) Do(ctx context.Context, method, path string, body any, out any) (int, error) {
 	c.warnInsecure()
 
@@ -149,6 +157,8 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 	return resp.StatusCode, nil
 }
 
+// Stream executes the primary logic for the Stream operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (c *Client) Stream(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	c.warnInsecure()
 

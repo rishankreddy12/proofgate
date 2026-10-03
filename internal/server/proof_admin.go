@@ -1,3 +1,4 @@
+// Package server provides enterprise-grade capabilities, configuration, and structural components for the server subsystem.
 package server
 
 import (
@@ -12,6 +13,8 @@ import (
 	"github.com/proofgate/proofgate/internal/store"
 )
 
+// ProofAdminHandlers wraps the dependencies necessary to serve the Proof Judge
+// configuration and calibration endpoints.
 type ProofAdminHandlers struct {
 	Store    proof.CurveInputStore
 	Setter   OverrideSetter
@@ -19,10 +22,12 @@ type ProofAdminHandlers struct {
 	OnReload func()
 }
 
+// OverrideSetter abstracts the interface for persisting dynamic configuration overrides.
 type OverrideSetter interface {
 	SetOverride(ctx context.Context, o store.Override) error
 }
 
+// authorize enforces simple bearer-token authentication for the Proof admin endpoints.
 func (h *ProofAdminHandlers) authorize(r *http.Request) bool {
 	if h.AdminKey == "" {
 		return true // no key required if not configured
@@ -37,6 +42,7 @@ func (h *ProofAdminHandlers) authorize(r *http.Request) bool {
 	return false
 }
 
+// CacheCurveResponse serializes the ROC-curve calibration data returned to the admin dashboard.
 type CacheCurveResponse struct {
 	Route                string             `json:"route"`
 	RecommendedThreshold float64            `json:"recommended_threshold"`
@@ -45,6 +51,8 @@ type CacheCurveResponse struct {
 	Curve                []proof.CurvePoint `json:"curve"`
 }
 
+// CacheCurve computes the optimal semantic similarity threshold for a specific route
+// by evaluating historical embeddings stored in the audit logs.
 func (h *ProofAdminHandlers) CacheCurve(w http.ResponseWriter, r *http.Request) {
 	if !h.authorize(r) {
 		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)
@@ -82,11 +90,13 @@ func (h *ProofAdminHandlers) CacheCurve(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// CacheApplyRequest defines the JSON schema for applying a semantic cache threshold override.
 type CacheApplyRequest struct {
 	Route     string  `json:"route"`
 	Threshold float64 `json:"threshold"`
 }
 
+// CacheApplyResponse defines the schema returned after successfully applying an override.
 type CacheApplyResponse struct {
 	Status         string  `json:"status"`
 	Route          string  `json:"route"`
@@ -94,6 +104,8 @@ type CacheApplyResponse struct {
 	CacheThreshold float64 `json:"cache_threshold"`
 }
 
+// CacheApply persists a calibrated semantic cache threshold into the global override store
+// and triggers an immediate reload of the routing configuration across all gateway nodes.
 func (h *ProofAdminHandlers) CacheApply(w http.ResponseWriter, r *http.Request) {
 	if !h.authorize(r) {
 		http.Error(w, `{"error": "unauthorized"}`, http.StatusUnauthorized)

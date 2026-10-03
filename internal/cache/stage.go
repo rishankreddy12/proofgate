@@ -1,3 +1,4 @@
+// Package cache provides enterprise-grade capabilities, configuration, and structural components for the cache subsystem.
 package cache
 
 import (
@@ -13,16 +14,19 @@ import (
 	"github.com/proofgate/proofgate/internal/pipeline"
 )
 
+// ExactStore defines the backend contract for deterministic key-value cache operations.
 type ExactStore interface {
 	Get(ctx context.Context, key string) (*Entry, error)
 	Put(ctx context.Context, tenantID, key string, e Entry, ttl time.Duration) error
 }
 
+// SemanticStore defines the backend contract for vector-based ANN cache operations.
 type SemanticStore interface {
 	Put(ctx context.Context, tenantID, route, scope string, emb []float32, e Entry, ttl time.Duration) (string, error)
 	Nearest(ctx context.Context, tenantID, scope string, emb []float32) (*Match, error)
 }
 
+// Candidate tracks a potential (but unused) cache hit for "shadow" evaluation mode.
 type Candidate struct {
 	Query           string
 	CandidateQuery  string
@@ -31,6 +35,7 @@ type Candidate struct {
 	Source          string // "exact" | "approx"
 }
 
+// ShadowRecord captures the disparity between a shadow cache hit and the real upstream LLM response.
 type ShadowRecord struct {
 	ID              string
 	TS              time.Time
@@ -45,6 +50,7 @@ type ShadowRecord struct {
 	CandidateSource string
 }
 
+// State encapsulates the mid-pipeline execution context carried between Before (Read) and After (Write).
 type State struct {
 	Plan        Plan
 	Scope       string
@@ -57,8 +63,14 @@ type State struct {
 	Candidate   *Candidate
 }
 
+// StateKey provides a globally accessible constant or variable for StateKey.
 const StateKey = "cache.state"
 
+// Stage implements the core Caching pipeline plugin.
+//
+// Mechanics:
+// 1. Before(): Generates determinist keys and queries Exact/Semantic stores. On a hit, it synthetically injects the cached response into the pipeline, bypassing all upstream targets.
+// 2. After(): Intercepts successful, completed LLM generations and asynchronously persists them back to the Redis stores.
 type Stage struct {
 	exact    ExactStore
 	sem      SemanticStore
@@ -71,6 +83,7 @@ type Stage struct {
 	onShadow func(ShadowRecord)
 }
 
+// NewStage initializes the pipeline cache plugin with its constituent storage drivers.
 func NewStage(x ExactStore, s SemanticStore, e Embedder, onErr func(op string), onDrop func()) *Stage {
 	if onErr == nil {
 		onErr = func(string) {}
@@ -90,6 +103,8 @@ func NewStage(x ExactStore, s SemanticStore, e Embedder, onErr func(op string), 
 	}
 }
 
+// SetOnShadow executes the primary logic for the SetOnShadow operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) SetOnShadow(fn func(ShadowRecord)) {
 	if fn == nil {
 		fn = func(ShadowRecord) {}
@@ -97,8 +112,13 @@ func (s *Stage) SetOnShadow(fn func(ShadowRecord)) {
 	s.onShadow = fn
 }
 
+// Name executes the primary logic for the Name operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Name() string { return "cache" }
-func (s *Stage) Wait()        { s.wg.Wait() }
+
+// Wait executes the primary logic for the Wait operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
+func (s *Stage) Wait() { s.wg.Wait() }
 
 func (s *Stage) hit(c *pipeline.Call, e *Entry, status string, sim float64) {
 	r := *e.Response
@@ -115,6 +135,7 @@ func (s *Stage) hit(c *pipeline.Call, e *Entry, status string, sim float64) {
 	}
 }
 
+// Before executes prior to routing. It computes eligibility and attempts to fulfill the request entirely from cache.
 func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	if c.Route == nil {
 		return false, nil
@@ -219,6 +240,8 @@ func storable(r *api.ChatResponse) bool {
 	return ch.FinishReason == "stop" && len(ch.Message.ToolCalls) == 0 && ch.Message.Content.PlainText() != ""
 }
 
+// After executes post-generation. If the request was a cache miss and generated successfully,
+// it dispatches an asynchronous worker to write the payload to Redis.
 func (s *Stage) After(_ context.Context, c *pipeline.Call) {
 	st, ok := c.Values[StateKey].(*State)
 	if !ok || c.Err != nil {

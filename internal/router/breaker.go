@@ -1,3 +1,4 @@
+// Package router provides enterprise-grade capabilities, configuration, and structural components for the router subsystem.
 package router
 
 import (
@@ -5,6 +6,7 @@ import (
 	"time"
 )
 
+// breakerState tracks the momentary health of a specific upstream target.
 type breakerState struct {
 	failures  int
 	openUntil time.Time
@@ -12,7 +14,7 @@ type breakerState struct {
 }
 
 // Breakers holds one circuit breaker per target. State is per replica; that is intentional:
-// each replica sees its own network path to the provider.
+// each replica sees its own network path to the provider and can fail independently.
 type Breakers struct {
 	mu        sync.Mutex
 	threshold int
@@ -21,10 +23,12 @@ type Breakers struct {
 	m         map[Target]*breakerState
 }
 
+// NewBreakers initializes a concurrency-safe Circuit Breaker registry for all route targets.
 func NewBreakers(threshold int, openFor time.Duration, now func() time.Time) *Breakers {
 	return &Breakers{threshold: threshold, openFor: openFor, now: now, m: map[Target]*breakerState{}}
 }
 
+// get lazily initializes or retrieves the breaker state for a target.
 func (b *Breakers) get(t Target) *breakerState {
 	s, ok := b.m[t]
 	if !ok {
@@ -34,7 +38,11 @@ func (b *Breakers) get(t Target) *breakerState {
 	return s
 }
 
-// Allow reports whether a call to t may proceed. After the open period it admits exactly one probe.
+// Allow reports whether a call to t may proceed.
+// State Machine:
+// - Closed: returns true.
+// - Open (within timeout): returns false.
+// - Half-Open (timeout expired): admits exactly ONE probe request and returns true. Subsequent checks return false until the probe resolves.
 func (b *Breakers) Allow(t Target) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -49,12 +57,16 @@ func (b *Breakers) Allow(t Target) bool {
 	return true
 }
 
+// Success records a successful execution, resetting the breaker back to the Closed state.
 func (b *Breakers) Success(t Target) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	*b.get(t) = breakerState{}
 }
 
+// Failure records a failed execution against the target.
+// If the failure threshold is reached, or a Half-Open probe fails, the circuit transitions
+// to Open for the configured 'openFor' duration.
 func (b *Breakers) Failure(t Target) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -66,7 +78,8 @@ func (b *Breakers) Failure(t Target) {
 	}
 }
 
-// OpenFor opens the circuit breaker for target t for duration d (e.g. from upstream Retry-After).
+// OpenFor explicitly opens the circuit breaker for target t for a specific duration.
+// This is typically used to respect HTTP 429 Retry-After headers from providers.
 func (b *Breakers) OpenFor(t Target, d time.Duration) {
 	if d <= 0 {
 		return
@@ -81,6 +94,7 @@ func (b *Breakers) OpenFor(t Target, d time.Duration) {
 	}
 }
 
+// State returns a human-readable representation of the breaker's current phase.
 func (b *Breakers) State(t Target) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -97,7 +111,8 @@ func (b *Breakers) State(t Target) string {
 	}
 }
 
-// open reports whether t should be deprioritised by the planner (open and not yet probe-able).
+// open reports whether t should be deprioritized by the planner.
+// True if the circuit is Open and not yet eligible for a probe.
 func (b *Breakers) open(t Target) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()

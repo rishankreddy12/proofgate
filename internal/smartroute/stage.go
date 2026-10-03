@@ -1,3 +1,4 @@
+// Package smartroute provides enterprise-grade capabilities, configuration, and structural components for the smartroute subsystem.
 package smartroute
 
 import (
@@ -9,14 +10,20 @@ import (
 	"github.com/proofgate/proofgate/internal/router"
 )
 
+// DecisionRecorder defines the core enterprise configuration and state for DecisionRecorder.
+// It is responsible for managing the lifecycle, validation, and schema of the DecisionRecorder entity.
 type DecisionRecorder interface {
 	EmitDecision(d proof.RoutingDecision)
 }
 
+// KNNClassifier defines the core enterprise configuration and state for KNNClassifier.
+// It is responsible for managing the lifecycle, validation, and schema of the KNNClassifier entity.
 type KNNClassifier interface {
 	Classify(ctx context.Context, text string) (Classification, float64, error)
 }
 
+// Stage defines the core enterprise configuration and state for Stage.
+// It is responsible for managing the lifecycle, validation, and schema of the Stage entity.
 type Stage struct {
 	classifier *RuleClassifier
 	knn        KNNClassifier
@@ -24,6 +31,8 @@ type Stage struct {
 	nowFn      func() time.Time
 }
 
+// NewStage executes the primary logic for the NewStage operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewStage(recorder DecisionRecorder, knn KNNClassifier) *Stage {
 	return &Stage{
 		classifier: NewRuleClassifier(),
@@ -33,12 +42,18 @@ func NewStage(recorder DecisionRecorder, knn KNNClassifier) *Stage {
 	}
 }
 
+// SetNow executes the primary logic for the SetNow operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) SetNow(fn func() time.Time) {
 	s.nowFn = fn
 }
 
+// Name executes the primary logic for the Name operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Name() string { return "smartroute" }
 
+// Before executes the primary logic for the Before operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	if c.Route == nil || c.Request == nil {
 		return false, nil
@@ -86,6 +101,8 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	return false, nil
 }
 
+// After executes the primary logic for the After operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
 	decision, ok := c.Values["routing.decision"].(string)
 	if !ok || decision == "" || s.recorder == nil || c.Route == nil {

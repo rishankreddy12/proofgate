@@ -11,14 +11,19 @@ import (
 	"github.com/proofgate/proofgate/internal/router"
 )
 
+// Outcome characterizes the termination status of an upstream LLM execution attempt.
 type Outcome int
 
 const (
-	Unknown Outcome = iota
-	OK
-	Failed
+	// Unknown defines a specific variation or structural setting for Unknown.
+	Unknown Outcome = iota // Network partition, client hangup, or un-parseable error.
+	// OK defines a specific variation or structural setting for OK.
+	OK                     // Successful token generation.
+	// Failed defines a specific variation or structural setting for Failed.
+	Failed                 // Definitive provider fault (e.g. 500 Internal Server Error, Rate Limit).
 )
 
+// Sample encapsulates a single telemetry reading from a completed or failed provider request.
 type Sample struct {
 	Target  router.Target
 	TTFT    time.Duration
@@ -27,6 +32,8 @@ type Sample struct {
 	Outcome Outcome
 }
 
+// Stats represents the aggregated health telemetry for a specific provider Target.
+// It holds Exponentially Weighted Moving Averages (EWMA) to smooth out micro-spikes.
 type Stats struct {
 	TTFTMs    float64   `json:"ttft_ms"`
 	TTFTDevMs float64   `json:"ttft_dev_ms"`
@@ -40,12 +47,17 @@ type Stats struct {
 	Reason    string    `json:"reason"`
 }
 
+// entry represents the internal mutable state held by the Tracker for a specific provider.
 type entry struct {
 	Stats
 	breaches   int
 	lastBreach time.Time
 }
 
+// Tracker acts as the central brain for Smart Routing and Circuit Breaking telemetry.
+// It ingests generation metrics (TTFT, TPS, Failures) from all active HTTP request goroutines,
+// integrates peer gossip from other Gateway nodes, and determines in real-time whether a
+// provider target has breached its Service Level Objective (SLO) thresholds.
 type Tracker struct {
 	mu           sync.Mutex
 	cfg          config.HealthConfig
@@ -55,6 +67,7 @@ type Tracker struct {
 	knownTargets map[router.Target]bool
 }
 
+// NewTracker instantiates a unified health telemetry engine.
 func NewTracker(cfg config.HealthConfig, slos map[string]config.SLO, now func() time.Time) *Tracker {
 	return &Tracker{
 		cfg:          cfg,
@@ -75,6 +88,8 @@ func (t *Tracker) SetTargets(targets []router.Target) {
 	}
 }
 
+// SetSLOs executes the primary logic for the SetSLOs operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (t *Tracker) SetSLOs(s map[string]config.SLO) {
 	t.mu.Lock()
 	t.slos = s
@@ -97,6 +112,7 @@ func ewma(old, x, a float64, n int) float64 {
 	return (1-a)*old + a*x
 }
 
+// Observe processes a fresh telemetry Sample into the EWMA structures.
 func (t *Tracker) Observe(s Sample) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -240,6 +256,8 @@ func (t *Tracker) evaluate(tg router.Target, e *entry) {
 	}
 }
 
+// Degraded executes the primary logic for the Degraded operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (t *Tracker) Degraded(tg router.Target) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -247,12 +265,16 @@ func (t *Tracker) Degraded(tg router.Target) bool {
 	return ok && e.Degraded
 }
 
+// Stats executes the primary logic for the Stats operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (t *Tracker) Stats(tg router.Target) Stats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.get(tg).Stats
 }
 
+// Snapshot executes the primary logic for the Snapshot operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (t *Tracker) Snapshot() map[string]Stats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -263,6 +285,8 @@ func (t *Tracker) Snapshot() map[string]Stats {
 	return out
 }
 
+// DegradedTargets executes the primary logic for the DegradedTargets operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (t *Tracker) DegradedTargets() []router.Target {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -275,6 +299,8 @@ func (t *Tracker) DegradedTargets() []router.Target {
 	return out
 }
 
+// HedgeDelay executes the primary logic for the HedgeDelay operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (t *Tracker) HedgeDelay(tg router.Target, def time.Duration) time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()

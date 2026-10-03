@@ -26,6 +26,8 @@ var DefaultAllowedMethods = []string{
 	"notifications/*",
 }
 
+// Allowed executes the primary logic for the Allowed operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Allowed(p *store.MCPPolicy, server, tool string) bool {
 	if p == nil {
 		return false

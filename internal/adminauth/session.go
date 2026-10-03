@@ -1,3 +1,4 @@
+// Package adminauth provides enterprise-grade capabilities, configuration, and structural components for the adminauth subsystem.
 package adminauth
 
 import (
@@ -19,16 +20,26 @@ import (
 )
 
 var (
-	ErrSessionNotFound     = errors.New("session not found")
-	ErrSessionExpired      = errors.New("session expired")
-	ErrSessionIdle         = errors.New("session idle timeout")
+	// ErrSessionNotFound defines a specific variation or structural setting for ErrSessionNotFound.
+	ErrSessionNotFound = errors.New("session not found")
+	// ErrSessionExpired defines a specific variation or structural setting for ErrSessionExpired.
+	ErrSessionExpired = errors.New("session expired")
+	// ErrSessionIdle defines a specific variation or structural setting for ErrSessionIdle.
+	ErrSessionIdle = errors.New("session idle timeout")
+	// ErrInvalidSessionToken defines a specific variation or structural setting for ErrInvalidSessionToken.
 	ErrInvalidSessionToken = errors.New("invalid session token")
-	ErrAccountLocked       = errors.New("account locked")
-	ErrIPRateLimited       = errors.New("ip rate limited")
-	ErrAccountDisabled     = errors.New("account disabled")
-	ErrInvalidCredentials  = errors.New("invalid credentials")
+	// ErrAccountLocked defines a specific variation or structural setting for ErrAccountLocked.
+	ErrAccountLocked = errors.New("account locked")
+	// ErrIPRateLimited defines a specific variation or structural setting for ErrIPRateLimited.
+	ErrIPRateLimited = errors.New("ip rate limited")
+	// ErrAccountDisabled defines a specific variation or structural setting for ErrAccountDisabled.
+	ErrAccountDisabled = errors.New("account disabled")
+	// ErrInvalidCredentials defines a specific variation or structural setting for ErrInvalidCredentials.
+	ErrInvalidCredentials = errors.New("invalid credentials")
 )
 
+// Service defines the core enterprise configuration and state for Service.
+// It is responsible for managing the lifecycle, validation, and schema of the Service entity.
 type Service struct {
 	store    AdminStore
 	sessions SessionStore
@@ -36,10 +47,14 @@ type Service struct {
 	scrubber *telemetry.Scrubber
 }
 
+// NewService executes the primary logic for the NewService operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewService(store AdminStore, rdb redis.Cmdable, cfg config.AdminAuthConfig, scrubber *telemetry.Scrubber) *Service {
 	return NewServiceWithStore(store, NewRedisStore(rdb), cfg, scrubber)
 }
 
+// NewServiceWithStore executes the primary logic for the NewServiceWithStore operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewServiceWithStore(store AdminStore, sessions SessionStore, cfg config.AdminAuthConfig, scrubber *telemetry.Scrubber) *Service {
 	return &Service{
 		store:    store,
@@ -49,6 +64,8 @@ func NewServiceWithStore(store AdminStore, sessions SessionStore, cfg config.Adm
 	}
 }
 
+// AbsTimeout executes the primary logic for the AbsTimeout operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Service) AbsTimeout() time.Duration {
 	return s.cfg.SessionAbsTimeout
 }

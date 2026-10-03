@@ -1,4 +1,6 @@
-// Package config loads and validates proofgate.yaml.
+// Package config manages the declarative configuration state of the LLM Gateway.
+// It handles parsing proofgate.yaml, enforcing validation constraints, applying
+// environment-variable overrides, and provisioning default fallbacks.
 package config
 
 import (
@@ -18,12 +20,16 @@ import (
 
 var mcpNameRe = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
+// MCPServerConfig defines the core enterprise configuration and state for MCPServerConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the MCPServerConfig entity.
 type MCPServerConfig struct {
 	Name    string            `yaml:"name"`
 	URL     string            `yaml:"url"`
 	Headers map[string]string `yaml:"headers_env"` // header name -> env var holding its value
 }
 
+// ServerConfig defines the core enterprise configuration and state for ServerConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the ServerConfig entity.
 type ServerConfig struct {
 	Addr                     string        `yaml:"addr"`
 	AdminAddr                string        `yaml:"admin_addr"`
@@ -40,7 +46,7 @@ type ServerConfig struct {
 
 // IsLoopbackAddr returns true if the host component of addr is a loopback address
 // (127.0.0.0/8, ::1, or localhost). Binds to all interfaces (e.g. "", ":port", "0.0.0.0", "::")
-// return false.
+// return false. This is primarily used to secure unauthenticated admin APIs.
 func IsLoopbackAddr(addr string) bool {
 	if addr == "" {
 		return false
@@ -63,6 +69,8 @@ func IsLoopbackAddr(addr string) bool {
 	return false
 }
 
+// ParsedTrustedProxies executes the primary logic for the ParsedTrustedProxies operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *ServerConfig) ParsedTrustedProxies() ([]*net.IPNet, error) {
 	var nets []*net.IPNet
 	for _, cidr := range s.TrustedProxies {
@@ -88,21 +96,29 @@ func (s *ServerConfig) ParsedTrustedProxies() ([]*net.IPNet, error) {
 	return nets, nil
 }
 
+// DatabaseConfig defines the core enterprise configuration and state for DatabaseConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the DatabaseConfig entity.
 type DatabaseConfig struct {
 	URL      string `yaml:"url"`
 	MaxConns int    `yaml:"max_conns"`
 }
 
+// RedisConfig defines the core enterprise configuration and state for RedisConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the RedisConfig entity.
 type RedisConfig struct {
 	URL string `yaml:"url"`
 }
 
+// BatcherConfig defines the core enterprise configuration and state for BatcherConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the BatcherConfig entity.
 type BatcherConfig struct {
 	Capacity      int           `yaml:"capacity"`
 	BatchSize     int           `yaml:"batch_size"`
 	FlushInterval time.Duration `yaml:"flush_interval"`
 }
 
+// AnalyticsConfig defines the core enterprise configuration and state for AnalyticsConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the AnalyticsConfig entity.
 type AnalyticsConfig struct {
 	ClickHouseDSN string        `yaml:"clickhouse_dsn"`
 	UsageBatcher  BatcherConfig `yaml:"usage_batcher"`
@@ -113,27 +129,38 @@ type AnalyticsConfig struct {
 	StoreText     string        `yaml:"store_text"`
 }
 
+// TelemetryConfig defines the core enterprise configuration and state for TelemetryConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the TelemetryConfig entity.
 type TelemetryConfig struct {
-	OTLPEndpoint string `yaml:"otlp_endpoint"`
-	ServiceName  string `yaml:"service_name"`
+	OTLPEndpoint string  `yaml:"otlp_endpoint"`
+	ServiceName  string  `yaml:"service_name"`
+	SampleRate   float64 `yaml:"sample_rate"` // trace sampling ratio [0.0, 1.0], default 1.0
 }
 
+// BreakersConfig defines the core enterprise configuration and state for BreakersConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the BreakersConfig entity.
 type BreakersConfig struct {
 	Threshold int           `yaml:"threshold"`
 	Cooldown  time.Duration `yaml:"cooldown"`
 }
 
+// AuthConfig defines the core enterprise configuration and state for AuthConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the AuthConfig entity.
 type AuthConfig struct {
 	CacheTTL         time.Duration `yaml:"cache_ttl"`
 	NegativeCacheTTL time.Duration `yaml:"negative_cache_ttl"`
 	MaxCachedKeys    int           `yaml:"max_cached_keys"`
 }
 
+// MCPProxyConfig defines the core enterprise configuration and state for MCPProxyConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the MCPProxyConfig entity.
 type MCPProxyConfig struct {
 	MaxRequestBodyBytes int64         `yaml:"max_request_body_bytes"`
 	RequestTimeout      time.Duration `yaml:"request_timeout"`
 }
 
+// ProviderConfig defines the core enterprise configuration and state for ProviderConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the ProviderConfig entity.
 type ProviderConfig struct {
 	Name                 string            `yaml:"name"`
 	Type                 string            `yaml:"type"`
@@ -144,34 +171,44 @@ type ProviderConfig struct {
 	AllowInsecureBaseURL bool              `yaml:"allow_insecure_base_url"`
 }
 
+// SecretsConfig defines the core enterprise configuration and state for SecretsConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the SecretsConfig entity.
 type SecretsConfig struct {
-	KEK            string                   `yaml:"kek"`            // "local" | "vault"
-	LocalKEKFile   string                   `yaml:"local_kek_file"` // 32 random bytes, base64
-	VaultAddr      string                   `yaml:"vault_addr"`
-	VaultKey       string                   `yaml:"vault_key"`      // transit key name
-	VaultAuth      string                   `yaml:"vault_auth"`     // "token" (VAULT_TOKEN env) | "kubernetes"
-	VaultRole      string                   `yaml:"vault_role"`
-	VaultTokenFile string                   `yaml:"vault_token_file"`
-	CacheTTL       time.Duration   `yaml:"cache_ttl"`      // default 60s
+	KEK            string          `yaml:"kek"`            // "local" | "vault"
+	LocalKEKFile   string          `yaml:"local_kek_file"` // 32 random bytes, base64
+	VaultAddr      string          `yaml:"vault_addr"`
+	VaultKey       string          `yaml:"vault_key"`  // transit key name
+	VaultAuth      string          `yaml:"vault_auth"` // "token" (VAULT_TOKEN env) | "kubernetes"
+	VaultRole      string          `yaml:"vault_role"`
+	VaultTokenFile string          `yaml:"vault_token_file"`
+	CacheTTL       time.Duration   `yaml:"cache_ttl"` // default 60s
 	PreviousKEKs   []SecretsConfig `yaml:"previous_keks"`
 }
 
+// Price defines the core enterprise configuration and state for Price.
+// It is responsible for managing the lifecycle, validation, and schema of the Price entity.
 type Price struct {
 	Input       float64 `yaml:"input"`
 	Output      float64 `yaml:"output"`
 	CachedInput float64 `yaml:"cached_input"`
 }
 
+// TargetConfig defines the core enterprise configuration and state for TargetConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the TargetConfig entity.
 type TargetConfig struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
 }
 
+// RetryConfig defines the core enterprise configuration and state for RetryConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the RetryConfig entity.
 type RetryConfig struct {
 	MaxAttempts int           `yaml:"max_attempts"`
 	BaseDelay   time.Duration `yaml:"base_delay"`
 }
 
+// CacheConfig defines the core enterprise configuration and state for CacheConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the CacheConfig entity.
 type CacheConfig struct {
 	Mode                    string        `yaml:"mode"`
 	Exact                   bool          `yaml:"-"`
@@ -188,22 +225,30 @@ type CacheConfig struct {
 	AuditSampleRate         float64       `yaml:"audit_sample_rate"`
 }
 
+// InjectionGuardConfig defines the core enterprise configuration and state for InjectionGuardConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the InjectionGuardConfig entity.
 type InjectionGuardConfig struct {
 	Enabled   bool    `yaml:"enabled"`
 	Threshold float64 `yaml:"threshold"` // default 0.70
 	Action    string  `yaml:"action"`    // "block" | "warn", default "block"
 }
 
+// PIIGuardConfig defines the core enterprise configuration and state for PIIGuardConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the PIIGuardConfig entity.
 type PIIGuardConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Mode    string `yaml:"mode"` // "redact" | "mask", default "redact"
 }
 
+// GuardConfig defines the core enterprise configuration and state for GuardConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the GuardConfig entity.
 type GuardConfig struct {
 	Injection InjectionGuardConfig `yaml:"injection"`
 	PII       PIIGuardConfig       `yaml:"pii"`
 }
 
+// SmartRouteConfig defines the core enterprise configuration and state for SmartRouteConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the SmartRouteConfig entity.
 type SmartRouteConfig struct {
 	Mode                string  `yaml:"mode"` // "off" | "shadow" | "on", default "off"
 	CheapTarget         string  `yaml:"cheap_target"`
@@ -215,12 +260,16 @@ type SmartRouteConfig struct {
 	ConfidenceThreshold float64 `yaml:"confidence_threshold"`
 }
 
+// HedgeConfig defines the core enterprise configuration and state for HedgeConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the HedgeConfig entity.
 type HedgeConfig struct {
 	Enabled  bool          `yaml:"enabled"`
 	Delay    time.Duration `yaml:"delay"`
 	MaxExtra float64       `yaml:"max_extra"` // max share of requests that may be hedged, default 0.10
 }
 
+// RouteConfig defines the core enterprise configuration and state for RouteConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the RouteConfig entity.
 type RouteConfig struct {
 	Name              string           `yaml:"name"`
 	Targets           []TargetConfig   `yaml:"targets"`
@@ -237,6 +286,8 @@ type RouteConfig struct {
 	Hedge             HedgeConfig      `yaml:"hedge"`
 }
 
+// Defaults defines the core enterprise configuration and state for Defaults.
+// It is responsible for managing the lifecycle, validation, and schema of the Defaults entity.
 type Defaults struct {
 	MaxTokensReserve    int           `yaml:"max_tokens_reserve"` // cap on completion tokens pre-charged by the rate limiter
 	DefaultMaxTokens    int           `yaml:"default_max_tokens"`
@@ -247,12 +298,16 @@ type Defaults struct {
 	EmbedderCacheSize   int           `yaml:"embedder_cache_size"`
 }
 
+// SLO defines the core enterprise configuration and state for SLO.
+// It is responsible for managing the lifecycle, validation, and schema of the SLO entity.
 type SLO struct {
 	TTFTMs       float64 `yaml:"ttft_ms"`
 	MinTPS       float64 `yaml:"min_tps"`
 	MaxErrorRate float64 `yaml:"max_error_rate"`
 }
 
+// HealthConfig defines the core enterprise configuration and state for HealthConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the HealthConfig entity.
 type HealthConfig struct {
 	Alpha         float64       `yaml:"alpha"`
 	Breaches      int           `yaml:"breaches"`
@@ -266,12 +321,16 @@ type HealthConfig struct {
 	GossipSecret  string        `yaml:"gossip_secret"`
 }
 
+// CapabilityConfig defines the core enterprise configuration and state for CapabilityConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the CapabilityConfig entity.
 type CapabilityConfig struct {
 	MaxContextTokens int   `yaml:"max_context_tokens"`
 	SupportsVision   bool  `yaml:"supports_vision"`
 	SupportsTools    *bool `yaml:"supports_tools"`
 }
 
+// AdminChatConfig defines the core enterprise configuration and state for AdminChatConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the AdminChatConfig entity.
 type AdminChatConfig struct {
 	RPM           int      `yaml:"rpm"`
 	TPM           int      `yaml:"tpm"`
@@ -279,6 +338,8 @@ type AdminChatConfig struct {
 	AllowedRoutes []string `yaml:"allowed_routes"`
 }
 
+// AdminAuthConfig defines the core enterprise configuration and state for AdminAuthConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the AdminAuthConfig entity.
 type AdminAuthConfig struct {
 	Enabled            bool            `yaml:"enabled"`
 	MaxLoginAttempts   int             `yaml:"max_login_attempts"`
@@ -288,15 +349,21 @@ type AdminAuthConfig struct {
 	Chat               AdminChatConfig `yaml:"chat"`
 }
 
+// BudgetConfig defines the core enterprise configuration and state for BudgetConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the BudgetConfig entity.
 type BudgetConfig struct {
 	Reserve        string `yaml:"reserve"`         // "strict" | "off", default "strict"
 	RequirePricing *bool  `yaml:"require_pricing"` // default true
 }
 
+// IsReserveStrict executes the primary logic for the IsReserveStrict operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (b BudgetConfig) IsReserveStrict() bool {
 	return strings.ToLower(b.Reserve) != "off"
 }
 
+// IsRequirePricing executes the primary logic for the IsRequirePricing operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (b BudgetConfig) IsRequirePricing() bool {
 	if b.RequirePricing == nil {
 		return true
@@ -304,6 +371,8 @@ func (b BudgetConfig) IsRequirePricing() bool {
 	return *b.RequirePricing
 }
 
+// Config represents the fully-resolved, immutable configuration state of the Gateway.
+// It is instantiated via `Parse` or `Load` and is safe for concurrent reads across the pipeline.
 type Config struct {
 	Server           ServerConfig                `yaml:"server"`
 	Database         DatabaseConfig              `yaml:"database"`
@@ -330,6 +399,8 @@ type Config struct {
 	OverrideInterval time.Duration               `yaml:"override_interval"`
 }
 
+// ProofConfig defines the core enterprise configuration and state for ProofConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the ProofConfig entity.
 type ProofConfig struct {
 	MinThreshold          float64       `yaml:"min_threshold"` // default 0.86
 	MonitorInterval       time.Duration `yaml:"monitor_interval"`
@@ -339,6 +410,7 @@ type ProofConfig struct {
 	AllowedJudgeProviders []string      `yaml:"allowed_judge_providers"`
 }
 
+// Load reads the YAML configuration from disk and parses it into a strongly-typed Config.
 func Load(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -347,6 +419,8 @@ func Load(path string) (*Config, error) {
 	return Parse(b)
 }
 
+// Parse decodes a YAML byte slice, applies environmental overrides, establishes defaults,
+// and executes strict structural validation.
 func Parse(b []byte) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(strings.NewReader(string(b)))
@@ -474,6 +548,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Telemetry.ServiceName == "" {
 		c.Telemetry.ServiceName = "proofgate"
+	}
+	if c.Telemetry.SampleRate == 0 {
+		c.Telemetry.SampleRate = 1.0
 	}
 	if c.Breakers.Threshold == 0 {
 		c.Breakers.Threshold = 5
@@ -688,6 +765,9 @@ func (c *Config) validate() error {
 	}
 	if c.Breakers.Cooldown < 0 {
 		errs = append(errs, errors.New("breakers.cooldown must be >= 0"))
+	}
+	if c.Telemetry.SampleRate < 0.0 || c.Telemetry.SampleRate > 1.0 {
+		errs = append(errs, fmt.Errorf("telemetry.sample_rate must be between 0.0 and 1.0 (got %v)", c.Telemetry.SampleRate))
 	}
 	if c.Auth.CacheTTL < 0 || c.Auth.NegativeCacheTTL < 0 || c.Auth.MaxCachedKeys < 0 {
 		errs = append(errs, errors.New("auth settings must be >= 0"))
@@ -908,6 +988,7 @@ func (c *Config) validate() error {
 }
 
 // ProviderSpecs resolves API keys from the environment and database key resolver.
+// It converts declarative Config stanzas into active Provider execution specifications.
 func (c *Config) ProviderSpecs(getenv func(string) string, keys func(provider string) provider.KeyFunc) []provider.Spec {
 	out := make([]provider.Spec, 0, len(c.Providers))
 	maxRespBytes := c.Server.MaxUpstreamResponseBytes

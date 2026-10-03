@@ -135,6 +135,10 @@ func (f *fakeAdminStore) ListCredentials(ctx context.Context) ([]store.Credentia
 	return nil, nil
 }
 
+func (f *fakeAdminStore) GetTenant(ctx context.Context, id string) (store.Tenant, error) {
+	return store.Tenant{}, store.ErrNotFound
+}
+
 func (f *fakeAdminStore) ListAdminAuditFiltered(ctx context.Context, filter store.AdminAuditFilter) ([]store.AdminAuditEvent, error) {
 	var out []store.AdminAuditEvent
 	for _, a := range f.audit {

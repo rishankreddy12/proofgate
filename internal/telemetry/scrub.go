@@ -1,3 +1,4 @@
+// Package telemetry provides enterprise-grade capabilities, configuration, and structural components for the telemetry subsystem.
 package telemetry
 
 import (
@@ -10,11 +11,18 @@ import (
 	"github.com/proofgate/proofgate/internal/guard"
 )
 
+// Scrubber intercepts all structured log records emitted by `slog` and redacts
+// sensitive information before it reaches standard output or external log aggregators.
+//
+// Redaction Capabilities:
+// 1. Exact string matching (used for known API Keys and Tenant secrets).
+// 2. Heuristic regex scanning (via `guard.Detect`) to strip inadvertently leaked credentials.
 type Scrubber struct {
 	inner   slog.Handler
 	secrets *atomic.Pointer[[]string] // shared by handlers derived with WithAttrs/WithGroup
 }
 
+// NewScrubber wraps an existing slog.Handler (like JSONHandler) with redaction logic.
 func NewScrubber(inner slog.Handler) *Scrubber {
 	p := &atomic.Pointer[[]string]{}
 	initList := []string{}
@@ -22,9 +30,12 @@ func NewScrubber(inner slog.Handler) *Scrubber {
 	return &Scrubber{inner: inner, secrets: p}
 }
 
+// Register adds a highly-sensitive string (e.g. a newly loaded provider API key) to the
+// internal Exact Match redaction dictionary. This operation uses compare-and-swap (CAS)
+// for thread-safe mutation without locking.
 func (s *Scrubber) Register(secret string) {
 	if len(secret) < 8 {
-		return
+		return // Reject trivially short strings to prevent catastrophic log mangling
 	}
 	for {
 		old := s.secrets.Load()
@@ -40,6 +51,7 @@ func (s *Scrubber) Register(secret string) {
 	}
 }
 
+// scrub sweeps a single string for both exactly registered secrets and heuristically identified credentials.
 func (s *Scrubber) scrub(v string) string {
 	for _, sec := range *s.secrets.Load() {
 		v = strings.ReplaceAll(v, sec, "[REDACTED]")
@@ -53,6 +65,7 @@ func (s *Scrubber) scrub(v string) string {
 	return v
 }
 
+// attr recursively applies the scrubbing logic to nested slog.Attr pairs.
 func (s *Scrubber) attr(a slog.Attr) slog.Attr {
 	v := a.Value.Resolve()
 	switch v.Kind() {
@@ -76,8 +89,10 @@ func (s *Scrubber) attr(a slog.Attr) slog.Attr {
 	return a
 }
 
+// Enabled delegates the level check to the underlying handler.
 func (s *Scrubber) Enabled(ctx context.Context, l slog.Level) bool { return s.inner.Enabled(ctx, l) }
 
+// Handle intercepts the actual log record, scrubs the primary message, and walks all attributes.
 func (s *Scrubber) Handle(ctx context.Context, r slog.Record) error {
 	out := slog.NewRecord(r.Time, r.Level, s.scrub(r.Message), r.PC)
 	r.Attrs(func(a slog.Attr) bool {
@@ -87,6 +102,7 @@ func (s *Scrubber) Handle(ctx context.Context, r slog.Record) error {
 	return s.inner.Handle(ctx, out)
 }
 
+// WithAttrs forks the handler, applying the current scrub logic to the new pre-bound attributes.
 func (s *Scrubber) WithAttrs(as []slog.Attr) slog.Handler {
 	scrubbed := make([]slog.Attr, len(as))
 	for i, a := range as {
@@ -95,6 +111,7 @@ func (s *Scrubber) WithAttrs(as []slog.Attr) slog.Handler {
 	return &Scrubber{inner: s.inner.WithAttrs(scrubbed), secrets: s.secrets}
 }
 
+// WithGroup forks the handler into a named log group.
 func (s *Scrubber) WithGroup(name string) slog.Handler {
 	return &Scrubber{inner: s.inner.WithGroup(name), secrets: s.secrets}
 }

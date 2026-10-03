@@ -1,3 +1,4 @@
+// Package secrets provides enterprise-grade capabilities, configuration, and structural components for the secrets subsystem.
 package secrets
 
 import (
@@ -13,6 +14,7 @@ import (
 )
 
 var (
+	// KeycacheStaleServedTotal defines a specific variation or structural setting for KeycacheStaleServedTotal.
 	KeycacheStaleServedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "proofgate_keycache_stale_served_total",
@@ -22,6 +24,8 @@ var (
 	)
 )
 
+// CredentialSource defines the core enterprise configuration and state for CredentialSource.
+// It is responsible for managing the lifecycle, validation, and schema of the CredentialSource entity.
 type CredentialSource interface {
 	ActiveCredential(ctx context.Context, provider string) (Sealed, int, error)
 }
@@ -32,6 +36,8 @@ type cached struct {
 	staleUntil time.Time
 }
 
+// KeyCache defines the core enterprise configuration and state for KeyCache.
+// It is responsible for managing the lifecycle, validation, and schema of the KeyCache entity.
 type KeyCache struct {
 	src        CredentialSource
 	kek        KEK
@@ -45,10 +51,14 @@ type KeyCache struct {
 	m          map[string]cached
 }
 
+// NewKeyCache executes the primary logic for the NewKeyCache operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewKeyCache(src CredentialSource, kek KEK, ttl time.Duration, onSecret func(string)) *KeyCache {
 	return NewKeyCacheWithStaleGrace(src, kek, ttl, 5*time.Minute, onSecret)
 }
 
+// NewKeyCacheWithStaleGrace executes the primary logic for the NewKeyCacheWithStaleGrace operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewKeyCacheWithStaleGrace(src CredentialSource, kek KEK, ttl, staleGrace time.Duration, onSecret func(string)) *KeyCache {
 	if onSecret == nil {
 		onSecret = func(string) {}
@@ -71,6 +81,8 @@ func NewKeyCacheWithStaleGrace(src CredentialSource, kek KEK, ttl, staleGrace ti
 	}
 }
 
+// Get executes the primary logic for the Get operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 	now := k.now()
 
@@ -137,6 +149,8 @@ func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 	return res.(string), nil
 }
 
+// Purge executes the primary logic for the Purge operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (k *KeyCache) Purge() {
 	k.mu.Lock()
 	defer k.mu.Unlock()

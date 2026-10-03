@@ -1,3 +1,4 @@
+// Package agentrun provides enterprise-grade capabilities, configuration, and structural components for the agentrun subsystem.
 package agentrun
 
 import (
@@ -7,16 +8,25 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// StepStatus defines the core enterprise configuration and state for StepStatus.
+// It is responsible for managing the lifecycle, validation, and schema of the StepStatus entity.
 type StepStatus int
 
 const (
-	Allowed        StepStatus = 1
-	StepsExceeded  StepStatus = -1
-	CostExceeded   StepStatus = -2
+	// Allowed defines a specific variation or structural setting for Allowed.
+	Allowed StepStatus = 1
+	// StepsExceeded defines a specific variation or structural setting for StepsExceeded.
+	StepsExceeded StepStatus = -1
+	// CostExceeded defines a specific variation or structural setting for CostExceeded.
+	CostExceeded StepStatus = -2
+	// TokensExceeded defines a specific variation or structural setting for TokensExceeded.
 	TokensExceeded StepStatus = -3
-	Loop           StepStatus = -4
+	// Loop defines a specific variation or structural setting for Loop.
+	Loop StepStatus = -4
 )
 
+// StepResult defines the core enterprise configuration and state for StepResult.
+// It is responsible for managing the lifecycle, validation, and schema of the StepResult entity.
 type StepResult struct {
 	Status     StepStatus
 	Steps      int
@@ -26,6 +36,8 @@ type StepResult struct {
 	FuzzyScore float64
 }
 
+// Store defines the core enterprise configuration and state for Store.
+// It is responsible for managing the lifecycle, validation, and schema of the Store entity.
 type Store interface {
 	Step(ctx context.Context, tenantID, runID string, p store.RunPolicy, fingerprint string, estCost int64, estTokens int) (StepResult, error)
 	Charge(ctx context.Context, tenantID, runID string, p store.RunPolicy, actualMicros int64, actualTokens int, reservedMicros int64, reservedTokens int) error
@@ -59,8 +71,12 @@ redis.call('PEXPIRE', KEYS[1], ARGV[4])
 return {1, steps + 1, cost, tokens, repeats}
 `)
 
+// RedisStore defines the core enterprise configuration and state for RedisStore.
+// It is responsible for managing the lifecycle, validation, and schema of the RedisStore entity.
 type RedisStore struct{ rdb redis.UniversalClient }
 
+// NewRedisStore executes the primary logic for the NewRedisStore operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewRedisStore(rdb redis.UniversalClient) *RedisStore { return &RedisStore{rdb: rdb} }
 
 func keys(tenantID, runID string) (string, string) {
@@ -68,6 +84,8 @@ func keys(tenantID, runID string) (string, string) {
 	return "run:" + tag + ":" + runID, "runfp:" + tag + ":" + runID
 }
 
+// Step executes the primary logic for the Step operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *RedisStore) Step(ctx context.Context, tenantID, runID string, p store.RunPolicy, fp string, estCost int64, estTokens int) (StepResult, error) {
 	rk, fk := keys(tenantID, runID)
 	v, err := stepScript.Run(ctx, s.rdb, []string{rk, fk}, p.MaxSteps, p.CostMicros(), p.MaxTokens,
@@ -78,13 +96,15 @@ func (s *RedisStore) Step(ctx context.Context, tenantID, runID string, p store.R
 	return StepResult{Status: StepStatus(v[0]), Steps: int(v[1]), CostMicros: v[2], Tokens: int(v[3]), Repeats: int(v[4])}, nil
 }
 
+// Charge executes the primary logic for the Charge operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *RedisStore) Charge(ctx context.Context, tenantID, runID string, p store.RunPolicy, actualMicros int64, actualTokens int, reservedMicros int64, reservedTokens int) error {
 	rk, _ := keys(tenantID, runID)
 	pipe := s.rdb.TxPipeline()
-	
+
 	costDelta := actualMicros - reservedMicros
 	tokensDelta := actualTokens - reservedTokens
-	
+
 	if costDelta != 0 {
 		pipe.HIncrBy(ctx, rk, "cost", costDelta)
 	}

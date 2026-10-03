@@ -1,3 +1,4 @@
+// Package cache provides enterprise-grade capabilities, configuration, and structural components for the cache subsystem.
 package cache
 
 import (
@@ -22,6 +23,8 @@ type PurgeResult struct {
 }
 
 // Purge deletes cache keys matching the given options using SMEMBERS/SCAN and UNLINK.
+// If tagging is leveraged, it limits the scan space to the specific Sets representing those tags.
+// Otherwise, it performs a batched wildcard SCAN over the tenant's hash keyspace.
 func Purge(ctx context.Context, rdb *redis.Client, opts PurgeOptions) (*PurgeResult, error) {
 	if rdb == nil {
 		return &PurgeResult{}, nil
@@ -33,6 +36,8 @@ func Purge(ctx context.Context, rdb *redis.Client, opts PurgeOptions) (*PurgeRes
 	return purgeByScan(ctx, rdb, opts)
 }
 
+// purgeByTags executes a targeted cache eviction by resolving the Redis Sets
+// mapping a given tag back to the underlying exact and semantic cache keys.
 func purgeByTags(ctx context.Context, rdb *redis.Client, opts PurgeOptions) (*PurgeResult, error) {
 	toUnlink := make(map[string]struct{})
 	for _, tag := range opts.Tags {
@@ -85,6 +90,9 @@ func purgeByTags(ctx context.Context, rdb *redis.Client, opts PurgeOptions) (*Pu
 	return &PurgeResult{DeletedKeys: deleted}, nil
 }
 
+// purgeByScan executes a brute-force pattern scan (SCAN) over the entire database
+// or a specific tenant's keyspace. This is an expensive operation in Redis and should
+// be used carefully.
 func purgeByScan(ctx context.Context, rdb *redis.Client, opts PurgeOptions) (*PurgeResult, error) {
 	var patterns []string
 	if opts.TenantID != "" {

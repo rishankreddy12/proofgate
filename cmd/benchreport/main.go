@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (

@@ -369,4 +369,3 @@ func TestRAGContextIsolation(t *testing.T) {
 	require.Equal(t, "hit-semantic", c3.CacheStatus)
 	require.Equal(t, "14 days per Contract A", c3.Response.Choices[0].Message.Content.Text)
 }
-

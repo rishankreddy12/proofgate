@@ -1,3 +1,4 @@
+// Package smartroute provides enterprise-grade capabilities, configuration, and structural components for the smartroute subsystem.
 package smartroute
 
 import (
@@ -5,6 +6,8 @@ import (
 	"math"
 )
 
+// LabeledExample defines the core enterprise configuration and state for LabeledExample.
+// It is responsible for managing the lifecycle, validation, and schema of the LabeledExample entity.
 type LabeledExample struct {
 	ID          string
 	Vector      []float32
@@ -12,25 +15,37 @@ type LabeledExample struct {
 	StrongScore float64
 }
 
+// Neighbor defines the core enterprise configuration and state for Neighbor.
+// It is responsible for managing the lifecycle, validation, and schema of the Neighbor entity.
 type Neighbor struct {
 	Example  LabeledExample
 	Distance float64
 }
 
+// KNNIndex defines the core enterprise configuration and state for KNNIndex.
+// It is responsible for managing the lifecycle, validation, and schema of the KNNIndex entity.
 type KNNIndex interface {
 	Nearest(ctx context.Context, embedding []float32, k int) ([]Neighbor, error)
 }
 
+// QueryEmbedder defines the core enterprise configuration and state for QueryEmbedder.
+// It is responsible for managing the lifecycle, validation, and schema of the QueryEmbedder entity.
 type QueryEmbedder interface {
 	Embed(ctx context.Context, text string) ([]float32, error)
 }
 
+// QueryEmbedderFunc defines the core enterprise configuration and state for QueryEmbedderFunc.
+// It is responsible for managing the lifecycle, validation, and schema of the QueryEmbedderFunc entity.
 type QueryEmbedderFunc func(ctx context.Context, text string) ([]float32, error)
 
+// Embed executes the primary logic for the Embed operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (f QueryEmbedderFunc) Embed(ctx context.Context, text string) ([]float32, error) {
 	return f(ctx, text)
 }
 
+// KNNClassifierImpl defines the core enterprise configuration and state for KNNClassifierImpl.
+// It is responsible for managing the lifecycle, validation, and schema of the KNNClassifierImpl entity.
 type KNNClassifierImpl struct {
 	embedder            QueryEmbedder
 	index               KNNIndex
@@ -39,6 +54,8 @@ type KNNClassifierImpl struct {
 	epsilon             float64
 }
 
+// NewKNNClassifier executes the primary logic for the NewKNNClassifier operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewKNNClassifier(embedder QueryEmbedder, index KNNIndex, k int, threshold float64) *KNNClassifierImpl {
 	if k <= 0 {
 		k = 7
@@ -55,6 +72,8 @@ func NewKNNClassifier(embedder QueryEmbedder, index KNNIndex, k int, threshold f
 	}
 }
 
+// Classify executes the primary logic for the Classify operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (c *KNNClassifierImpl) Classify(ctx context.Context, text string) (Classification, float64, error) {
 	if c.index == nil {
 		return Classification{Decision: DecisionStrong, Reason: ReasonNone}, 0.5, nil

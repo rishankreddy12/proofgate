@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -10,10 +11,14 @@ import (
 	"github.com/proofgate/proofgate/internal/store"
 )
 
+// CacheLabelsStore defines the core enterprise configuration and state for CacheLabelsStore.
+// It is responsible for managing the lifecycle, validation, and schema of the CacheLabelsStore entity.
 type CacheLabelsStore interface {
 	CacheErrorRate(ctx context.Context, route string, since time.Time) (total int, unacceptable int, err error)
 }
 
+// CacheMonitorResult defines the core enterprise configuration and state for CacheMonitorResult.
+// It is responsible for managing the lifecycle, validation, and schema of the CacheMonitorResult entity.
 type CacheMonitorResult struct {
 	TotalEvaluated int
 	Unacceptable   int
@@ -23,6 +28,8 @@ type CacheMonitorResult struct {
 	Message        string
 }
 
+// MonitorCacheQuality executes the primary logic for the MonitorCacheQuality operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func MonitorCacheQuality(
 	ctx context.Context,
 	labelsStore CacheLabelsStore,

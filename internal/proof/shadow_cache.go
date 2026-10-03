@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -7,6 +8,8 @@ import (
 	"github.com/proofgate/proofgate/internal/cache"
 )
 
+// ShadowRecorder defines the core enterprise configuration and state for ShadowRecorder.
+// It is responsible for managing the lifecycle, validation, and schema of the ShadowRecorder entity.
 type ShadowRecorder struct {
 	ch            *CH
 	chRecs        chan ShadowRecord
@@ -18,6 +21,8 @@ type ShadowRecorder struct {
 	onErr         func(error)
 }
 
+// NewShadowRecorder executes the primary logic for the NewShadowRecorder operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewShadowRecorder(ch *CH, bufferSize, batchSize int, flushInterval time.Duration, onDrop func(), onErr func(error)) *ShadowRecorder {
 	if bufferSize <= 0 {
 		bufferSize = 1024
@@ -48,6 +53,8 @@ func NewShadowRecorder(ch *CH, bufferSize, batchSize int, flushInterval time.Dur
 	return sr
 }
 
+// Emit executes the primary logic for the Emit operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (sr *ShadowRecorder) Emit(r ShadowRecord) bool {
 	select {
 	case sr.chRecs <- r:
@@ -58,6 +65,8 @@ func (sr *ShadowRecorder) Emit(r ShadowRecord) bool {
 	}
 }
 
+// CacheHook executes the primary logic for the CacheHook operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (sr *ShadowRecorder) CacheHook() func(cache.ShadowRecord) {
 	return func(r cache.ShadowRecord) {
 		sr.Emit(ShadowRecord{
@@ -124,6 +133,8 @@ func (sr *ShadowRecorder) run() {
 	}
 }
 
+// Close executes the primary logic for the Close operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (sr *ShadowRecorder) Close() {
 	close(sr.stop)
 	<-sr.done

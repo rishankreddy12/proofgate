@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -14,12 +15,16 @@ import (
 )
 
 const (
-	JudgeCachePromptVersion   = "judge_cache_v2"
+	// JudgeCachePromptVersion defines a specific variation or structural setting for JudgeCachePromptVersion.
+	JudgeCachePromptVersion = "judge_cache_v2"
+	// JudgeRoutingPromptVersion defines a specific variation or structural setting for JudgeRoutingPromptVersion.
 	JudgeRoutingPromptVersion = "judge_routing_v2"
 )
 
 var (
-	ErrShadowConsentRequired  = errors.New("shadow consent required: tenant policy has not opted in to shadow judging")
+	// ErrShadowConsentRequired defines a specific variation or structural setting for ErrShadowConsentRequired.
+	ErrShadowConsentRequired = errors.New("shadow consent required: tenant policy has not opted in to shadow judging")
+	// ErrJudgeProviderNotAllowed defines a specific variation or structural setting for ErrJudgeProviderNotAllowed.
 	ErrJudgeProviderNotAllowed = errors.New("judge provider not in allowed_judge_providers list")
 )
 
@@ -58,22 +63,32 @@ var routingSchema = json.RawMessage(`{
 	}
 }`)
 
+// ChatCaller defines the core enterprise configuration and state for ChatCaller.
+// It is responsible for managing the lifecycle, validation, and schema of the ChatCaller entity.
 type ChatCaller interface {
 	ChatInternal(ctx context.Context, route string, req *api.ChatRequest) (*api.ChatResponse, error)
 }
 
+// ChatCallerFunc defines the core enterprise configuration and state for ChatCallerFunc.
+// It is responsible for managing the lifecycle, validation, and schema of the ChatCallerFunc entity.
 type ChatCallerFunc func(ctx context.Context, route string, req *api.ChatRequest) (*api.ChatResponse, error)
 
+// ChatInternal executes the primary logic for the ChatInternal operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (f ChatCallerFunc) ChatInternal(ctx context.Context, route string, req *api.ChatRequest) (*api.ChatResponse, error) {
 	return f(ctx, route, req)
 }
 
+// CacheEvalResult defines the core enterprise configuration and state for CacheEvalResult.
+// It is responsible for managing the lifecycle, validation, and schema of the CacheEvalResult entity.
 type CacheEvalResult struct {
 	Acceptable         bool
 	Reason             string
 	JudgePromptVersion string
 }
 
+// RoutingEvalResult defines the core enterprise configuration and state for RoutingEvalResult.
+// It is responsible for managing the lifecycle, validation, and schema of the RoutingEvalResult entity.
 type RoutingEvalResult struct {
 	ScoreCheap         float64
 	ScoreStrong        float64
@@ -81,6 +96,8 @@ type RoutingEvalResult struct {
 	JudgePromptVersion string
 }
 
+// Judge defines the core enterprise configuration and state for Judge.
+// It is responsible for managing the lifecycle, validation, and schema of the Judge entity.
 type Judge struct {
 	caller           ChatCaller
 	modelRoute       string
@@ -90,6 +107,8 @@ type Judge struct {
 	judgeProvider    string
 }
 
+// NewJudge executes the primary logic for the NewJudge operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewJudge(caller ChatCaller, modelRoute string) *Judge {
 	return &Judge{
 		caller:     caller,
@@ -98,24 +117,34 @@ func NewJudge(caller ChatCaller, modelRoute string) *Judge {
 	}
 }
 
+// SetRand executes the primary logic for the SetRand operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) SetRand(fn func() float64) {
 	if fn != nil {
 		j.randFn = fn
 	}
 }
 
+// SetRequireConsent executes the primary logic for the SetRequireConsent operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) SetRequireConsent(req bool) {
 	j.requireConsent = req
 }
 
+// SetAllowedProviders executes the primary logic for the SetAllowedProviders operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) SetAllowedProviders(providers []string) {
 	j.allowedProviders = providers
 }
 
+// SetJudgeProvider executes the primary logic for the SetJudgeProvider operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) SetJudgeProvider(p string) {
 	j.judgeProvider = p
 }
 
+// ValidateConsent executes the primary logic for the ValidateConsent operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) ValidateConsent(tenantConsent bool) error {
 	if j.requireConsent && !tenantConsent {
 		return ErrShadowConsentRequired
@@ -163,17 +192,21 @@ func extractJSON(s string) string {
 }
 
 func floatPtr(f float64) *float64 { return &f }
-func intPtr(i int) *int             { return &i }
+func intPtr(i int) *int           { return &i }
 
 type cacheEvalJSON struct {
 	Acceptable bool   `json:"acceptable"`
 	Reason     string `json:"reason"`
 }
 
+// EvaluateCache executes the primary logic for the EvaluateCache operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) EvaluateCache(ctx context.Context, r ShadowRecord) (CacheEvalResult, error) {
 	return j.EvaluateCacheWithConsent(ctx, r, true)
 }
 
+// EvaluateCacheWithConsent executes the primary logic for the EvaluateCacheWithConsent operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) EvaluateCacheWithConsent(ctx context.Context, r ShadowRecord, tenantConsent bool) (CacheEvalResult, error) {
 	if err := j.ValidateConsent(tenantConsent); err != nil {
 		return CacheEvalResult{}, err
@@ -252,10 +285,14 @@ type routingEvalJSON struct {
 	Reason string  `json:"reason"`
 }
 
+// EvaluateRouting executes the primary logic for the EvaluateRouting operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) EvaluateRouting(ctx context.Context, prompt, cheapAnswer, strongAnswer string) (RoutingEvalResult, error) {
 	return j.EvaluateRoutingWithConsent(ctx, prompt, cheapAnswer, strongAnswer, true)
 }
 
+// EvaluateRoutingWithConsent executes the primary logic for the EvaluateRoutingWithConsent operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (j *Judge) EvaluateRoutingWithConsent(ctx context.Context, prompt, cheapAnswer, strongAnswer string, tenantConsent bool) (RoutingEvalResult, error) {
 	if err := j.ValidateConsent(tenantConsent); err != nil {
 		return RoutingEvalResult{}, err

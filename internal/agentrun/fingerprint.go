@@ -15,6 +15,8 @@ var (
 	spaces = regexp.MustCompile(`\s+`)
 )
 
+// Normalize executes the primary logic for the Normalize operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Normalize(s string) string {
 	s = strings.ToLower(s)
 	s = digits.ReplaceAllString(s, "#")

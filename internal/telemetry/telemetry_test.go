@@ -68,7 +68,7 @@ func TestAccessLogKeepsFlusherAndHidesSecrets(t *testing.T) {
 
 func TestTracingNoopWithoutEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	shutdown, err := SetupTracing(context.Background(), "proofgate")
+	shutdown, err := SetupTracing(context.Background(), "proofgate", 1.0)
 	require.NoError(t, err)
 	require.NoError(t, shutdown(context.Background()))
 }

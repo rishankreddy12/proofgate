@@ -46,6 +46,7 @@ var ScopeExcludedFields = map[string]string{
 	"User":          "conditionally included in Scope only when cfg.PerUser is true",
 }
 
+// Plan defines the cache execution strategy chosen for an incoming request.
 type Plan struct {
 	Exact    bool
 	Semantic bool
@@ -64,6 +65,10 @@ func usesTools(r *api.ChatRequest) bool {
 	return false
 }
 
+// Eligibility determines if an inbound HTTP request can safely interact with the cache engine.
+//
+// Security & Consistency: It strictly prohibits caching requests containing function tools,
+// bypassing the cache if requested by client headers or internal router calls.
 func Eligibility(req *api.ChatRequest, hdr http.Header, cfg config.CacheConfig, internal ...bool) Plan {
 	if cfg.Mode == "" || cfg.Mode == "off" {
 		return Plan{}
@@ -162,6 +167,11 @@ func ContextHash(req *api.ChatRequest) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// Scope generates a deterministic SHA-256 hex digest summarizing the entire environmental
+// and configurable parameter surface of the request (e.g. Temperature, TopP, System Prompts, Routing parameters).
+//
+// This acts as a strict partition key: a cache hit is ONLY permissible if the historical request
+// was executed under identical environmental constraints.
 func Scope(tenantID, route string, req *api.ChatRequest, cfg config.CacheConfig) string {
 	var system []string
 	for _, m := range req.Messages {
@@ -211,11 +221,14 @@ func Scope(tenantID, route string, req *api.ChatRequest, cfg config.CacheConfig)
 	)
 }
 
+// ExactHash generates the final definitive SHA-256 key for a 1:1 cache match.
+// It bundles the pre-calculated deterministic Scope with the exact JSON serialization of the user messages.
 func ExactHash(scope string, req *api.ChatRequest) string {
 	b, _ := json.Marshal(req.Messages)
 	return sum(scope, string(b))
 }
 
+// SemanticText extracts the final user-facing text from the message tree for vector projection.
 func SemanticText(req *api.ChatRequest) string {
 	for i := len(req.Messages) - 1; i >= 0; i-- {
 		if req.Messages[i].Role == "user" {
@@ -248,6 +261,8 @@ func SemanticTextFromHeader(req *api.ChatRequest, hdr http.Header, allowClientKe
 
 var tagRe = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
+// ParseTags executes the primary logic for the ParseTags operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func ParseTags(h string) []string {
 	var out []string
 	for _, t := range strings.Split(h, ",") {

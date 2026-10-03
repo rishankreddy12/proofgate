@@ -119,7 +119,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 			}
 		}
 	}
-	shutdownTracing, err := telemetry.SetupTracingWithEndpoint(ctx, cfg.Telemetry.ServiceName, cfg.Telemetry.OTLPEndpoint)
+	shutdownTracing, err := telemetry.SetupTracingWithEndpoint(ctx, cfg.Telemetry.ServiceName, cfg.Telemetry.OTLPEndpoint, cfg.Telemetry.SampleRate)
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	if err != nil && needsDBKeys(cfg) {
 		return err
 	}
-	if kek != nil && len(cfg.Secrets.PreviousKEKs) > 0 {
+	if kek != nil {
 		var prevKEKs []secrets.KEK
 		for _, pcfg := range cfg.Secrets.PreviousKEKs {
 			pkek, perr := secrets.FromConfigWithOptions(pcfg.KEK, pcfg.LocalKEKFile, pcfg.VaultAddr, pcfg.VaultKey, pcfg.VaultAuth, pcfg.VaultRole, pcfg.VaultTokenFile)
@@ -170,7 +170,11 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 				prevKEKs = append(prevKEKs, pkek)
 			}
 		}
-		kek = secrets.NewMultiKEK(kek, prevKEKs...)
+		multiKEK := secrets.NewMultiKEK(kek, prevKEKs...)
+		if cfg.Secrets.KEK == "vault" {
+			multiKEK.SetFallbackResolver(secrets.NewDynamicVaultResolverFromConfig(cfg.Secrets.VaultAddr, cfg.Secrets.VaultAuth, cfg.Secrets.VaultRole, cfg.Secrets.VaultTokenFile))
+		}
+		kek = multiKEK
 	}
 	var keyCache *secrets.KeyCache
 	if kek != nil {
@@ -239,18 +243,19 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	fuzzyDetector := agentrun.NewFuzzyDetector(embedFunc, agentrun.NewRedisFuzzyStore(rdb))
 
 	pipe := app.BuildPipeline(app.Deps{
-		Metrics:        metrics,
-		UsageEmit:      usage.Emit,
-		Runs:           runs,
-		FuzzyDetector:  fuzzyDetector,
-		DefaultMaxToks: cfg.Defaults.DefaultMaxTokens,
-		CacheStage:     cacheStage,
-		Limiter:        limiter,
-		MaxTokReserve:  cfg.Defaults.MaxTokensReserve,
-		FailOpenInc:    metrics.FailOpen.Inc,
-		Ledger:         ledger,
-		Pricing:        rt.Pricing,
-		BudgetCfg:      cfg.Budget,
+		Metrics:           metrics,
+		UsageEmit:         usage.Emit,
+		Runs:              runs,
+		FuzzyDetector:     fuzzyDetector,
+		DefaultMaxToks:    cfg.Defaults.DefaultMaxTokens,
+		CacheStage:        cacheStage,
+		Limiter:           limiter,
+		MaxTokReserve:     cfg.Defaults.MaxTokensReserve,
+		FailOpenInc:       metrics.FailOpen.Inc,
+		Ledger:            ledger,
+		Pricing:           rt.Pricing,
+		BudgetCfg:         cfg.Budget,
+		BudgetFailOpenInc: metrics.BudgetFailOpen.Inc,
 	})
 	h = &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now, Health: tracker, Metrics: metrics,
 		MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,
@@ -470,12 +475,12 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	})
 
 	cpDeps := &server.ControlPlaneDeps{
-		State:        state,
-		Store:        st,
-		Redis:        rdb,
-		AuthService:  adminAuthSvc,
-		ReloadFunc:   watcher.Reload,
-		PurgeCache:   server.AdminCachePurgeHandler(rdb),
+		State:       state,
+		Store:       st,
+		Redis:       rdb,
+		AuthService: adminAuthSvc,
+		ReloadFunc:  watcher.Reload,
+		PurgeCache:  server.AdminCachePurgeHandler(rdb),
 		PurgeSecrets: func() {
 			if keyCache != nil {
 				keyCache.Purge()
@@ -543,7 +548,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		slog.Warn("drain timed out", "err", err)
 	}
 	cacheStage.Wait()
-	
+
 	// Create a fresh context for final flush because the drain context might already be expired
 	fctx, fcancel := context.WithTimeout(context.Background(), cfg.Analytics.FlushTimeout)
 	defer fcancel()
@@ -555,4 +560,3 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	}
 	return shutdownTracing(fctx)
 }
-

@@ -11,6 +11,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
+// ShadowRecord defines the core enterprise configuration and state for ShadowRecord.
+// It is responsible for managing the lifecycle, validation, and schema of the ShadowRecord entity.
 type ShadowRecord struct {
 	ID                                                                    string
 	TS                                                                    time.Time
@@ -19,6 +21,8 @@ type ShadowRecord struct {
 	Query, CandidateQuery, CandidateAnswer, ActualAnswer, CandidateSource string
 }
 
+// CacheLabel defines the core enterprise configuration and state for CacheLabel.
+// It is responsible for managing the lifecycle, validation, and schema of the CacheLabel entity.
 type CacheLabel struct {
 	ShadowID           string
 	TS                 time.Time
@@ -28,35 +32,47 @@ type CacheLabel struct {
 	JudgePromptVersion string
 }
 
+// RoutingShadow defines the core enterprise configuration and state for RoutingShadow.
+// It is responsible for managing the lifecycle, validation, and schema of the RoutingShadow entity.
 type RoutingShadow struct {
-	ID                                                    string
-	TS                                                    time.Time
+	ID                                                   string
+	TS                                                   time.Time
 	TenantID, Route, Decision, CheapTarget, StrongTarget string
-	Prompt, CheapAnswer, StrongAnswer                     string
-	CheapScore, StrongScore                               float64
-	JudgeModel, JudgePromptVersion                        string
+	Prompt, CheapAnswer, StrongAnswer                    string
+	CheapScore, StrongScore                              float64
+	JudgeModel, JudgePromptVersion                       string
 }
 
+// RoutingDecision defines the core enterprise configuration and state for RoutingDecision.
+// It is responsible for managing the lifecycle, validation, and schema of the RoutingDecision entity.
 type RoutingDecision struct {
-	TS                                            time.Time
+	TS                                           time.Time
 	RequestID, TenantID, Route, Decision, Reason string
-	Score                                         float64
-	CostMicros, CounterfactualMicros              int64
+	Score                                        float64
+	CostMicros, CounterfactualMicros             int64
 }
 
+// LabeledPoint defines the core enterprise configuration and state for LabeledPoint.
+// It is responsible for managing the lifecycle, validation, and schema of the LabeledPoint entity.
 type LabeledPoint struct {
 	Similarity float64
 	Acceptable bool
 	Rater      string
 }
 
+// CH defines the core enterprise configuration and state for CH.
+// It is responsible for managing the lifecycle, validation, and schema of the CH entity.
 type CH struct {
 	conn      driver.Conn
 	storeText string
 }
 
+// NewCH executes the primary logic for the NewCH operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewCH(conn driver.Conn) *CH { return NewCHWithStoreText(conn, "full") }
 
+// NewCHWithStoreText executes the primary logic for the NewCHWithStoreText operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewCHWithStoreText(conn driver.Conn, storeText string) *CH {
 	if storeText == "" {
 		storeText = "hash"
@@ -99,6 +115,8 @@ func (c *CH) insert(ctx context.Context, table string, n int, row func(i int) []
 	return b.Send()
 }
 
+// InsertShadow executes the primary logic for the InsertShadow operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (c *CH) InsertShadow(ctx context.Context, rs []ShadowRecord) error {
 	return c.insert(ctx, "cache_shadow", len(rs), func(i int) []any {
 		r := rs[i]
@@ -111,6 +129,8 @@ func (c *CH) InsertShadow(ctx context.Context, rs []ShadowRecord) error {
 	})
 }
 
+// InsertLabels executes the primary logic for the InsertLabels operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (c *CH) InsertLabels(ctx context.Context, ls []CacheLabel) error {
 	return c.insert(ctx, "cache_labels", len(ls), func(i int) []any {
 		l := ls[i]
@@ -118,6 +138,8 @@ func (c *CH) InsertLabels(ctx context.Context, ls []CacheLabel) error {
 	})
 }
 
+// InsertRoutingShadow executes the primary logic for the InsertRoutingShadow operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (c *CH) InsertRoutingShadow(ctx context.Context, rs []RoutingShadow) error {
 	return c.insert(ctx, "routing_shadow", len(rs), func(i int) []any {
 		r := rs[i]
@@ -129,6 +151,8 @@ func (c *CH) InsertRoutingShadow(ctx context.Context, rs []RoutingShadow) error 
 	})
 }
 
+// InsertDecisions executes the primary logic for the InsertDecisions operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (c *CH) InsertDecisions(ctx context.Context, ds []RoutingDecision) error {
 	return c.insert(ctx, "routing_decisions", len(ds), func(i int) []any {
 		d := ds[i]

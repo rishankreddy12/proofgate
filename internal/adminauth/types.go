@@ -1,3 +1,4 @@
+// Package adminauth provides enterprise-grade capabilities, configuration, and structural components for the adminauth subsystem.
 package adminauth
 
 import (
@@ -29,10 +30,14 @@ type AdminPrincipal struct {
 	Session AdminSession
 }
 
+// WithAdminPrincipal executes the primary logic for the WithAdminPrincipal operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func WithAdminPrincipal(ctx context.Context, session *AdminSession) context.Context {
 	return context.WithValue(ctx, adminPrincipalKey, session)
 }
 
+// GetAdminPrincipal executes the primary logic for the GetAdminPrincipal operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func GetAdminPrincipal(ctx context.Context) *AdminSession {
 	if v := ctx.Value(adminPrincipalKey); v != nil {
 		if s, ok := v.(*AdminSession); ok {

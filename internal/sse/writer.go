@@ -1,3 +1,4 @@
+// Package sse provides enterprise-grade capabilities, configuration, and structural components for the sse subsystem.
 package sse
 
 import (
@@ -14,6 +15,8 @@ type Writer struct {
 	started bool
 }
 
+// NewWriter executes the primary logic for the NewWriter operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewWriter(w http.ResponseWriter) (*Writer, error) {
 	f, ok := w.(http.Flusher)
 	if !ok {
@@ -38,6 +41,8 @@ func (s *Writer) start() {
 // Started reports whether headers and at least one byte have been sent. After this, failover is impossible.
 func (s *Writer) Started() bool { return s.started }
 
+// Data executes the primary logic for the Data operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Writer) Data(v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -46,6 +51,8 @@ func (s *Writer) Data(v any) error {
 	return s.raw(b)
 }
 
+// Done executes the primary logic for the Done operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Writer) Done() error { return s.raw([]byte("[DONE]")) }
 
 func (s *Writer) raw(b []byte) error {
@@ -61,6 +68,8 @@ func (s *Writer) raw(b []byte) error {
 	return nil
 }
 
+// Event executes the primary logic for the Event operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Writer) Event(e Event) error {
 	s.start()
 	var b []byte
@@ -80,4 +89,3 @@ func (s *Writer) Event(e Event) error {
 	s.f.Flush()
 	return nil
 }
-

@@ -1,17 +1,27 @@
+// Package api provides enterprise-grade capabilities, configuration, and structural components for the api subsystem.
 package api
 
 import "strings"
 
-// Assembler rebuilds a ChatResponse from stream chunks (single choice, index 0).
+// Assembler is a stateful buffer used to reconstruct a complete ChatResponse
+// from a sequence of streaming ChatChunk responses. This is primarily utilized
+// by the gateway to reconstruct the full response payload for telemetry, caching,
+// and auditing purposes after a stream has completed returning to the client.
+// NOTE: It currently assumes a single choice (Index 0). Multi-choice streams
+// will drop data for choices > 0.
 type Assembler struct {
-	id, model string
-	created   int64
-	text      strings.Builder
-	tools     []ToolCall
-	finish    string
-	usage     *Usage
+	id      string
+	model   string
+	created int64
+	text    strings.Builder
+	tools   []ToolCall
+	finish  string
+	usage   *Usage
 }
 
+// Add ingests a new ChatChunk delta into the Assembler's internal buffer.
+// It coalesces text streams into a single contiguous string, merges parallel tool
+// call deltas into complete arguments, and captures the final usage/finish reasons.
 func (a *Assembler) Add(c *ChatChunk) {
 	if c.ID != "" && a.id == "" {
 		a.id, a.model, a.created = c.ID, c.Model, c.Created
@@ -47,8 +57,13 @@ func (a *Assembler) Add(c *ChatChunk) {
 	}
 }
 
+// Text returns the fully assembled contiguous text content collected so far.
+// It does not include any function arguments or tool call data.
 func (a *Assembler) Text() string { return a.text.String() }
 
+// Response finalizes the state of the Assembler and generates a complete,
+// monolithic ChatResponse representing the entirety of the streamed chunks.
+// The returned object matches the standard non-streaming OpenAI API output.
 func (a *Assembler) Response() *ChatResponse {
 	msg := Message{Role: "assistant", Content: Content{Text: a.text.String()}}
 	if len(a.tools) > 0 {
@@ -58,8 +73,10 @@ func (a *Assembler) Response() *ChatResponse {
 		Choices: []Choice{{Index: 0, Message: msg, FinishReason: a.finish}}, Usage: a.usage}
 }
 
-// ChunksFromResponse splits a complete response into stream chunks: role+first text, more text,
-// tool calls, a finish chunk and a usage chunk. Used to replay cache hits as streams.
+// ChunksFromResponse performs the inverse operation of the Assembler.
+// It accepts a monolithic ChatResponse and shreds it into an array of strictly-sized ChatChunks.
+// This is primarily used by the cache retrieval system to seamlessly replay a
+// cached monolithic response back to a client that requested streaming.
 func ChunksFromResponse(r *ChatResponse, chunkChars int) []ChatChunk {
 	if chunkChars <= 0 {
 		chunkChars = 64

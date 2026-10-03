@@ -1,0 +1,29 @@
+name: Fuzzing
+on:
+  schedule:
+    - cron: '0 2 * * *' # Nightly
+  pull_request:
+    paths:
+      - 'internal/**'
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - name: Download Fuzzing Corpus
+        run: |
+          mkdir -p testdata/fuzz
+          curl -sL https://proofgate-ci-corpus.s3.amazonaws.com/corpus-latest.tar.gz | tar -xz -C testdata/fuzz || echo "No corpus found, proceeding with defaults"
+      - name: Fuzz Guard RedactRestore
+        run: go test -fuzz=FuzzRedactRestore -fuzztime=5m ./internal/guard
+      - name: Fuzz MCP Proxy Parse
+        run: go test -fuzz=FuzzParse -fuzztime=5m ./internal/mcpproxy
+      - name: Fuzz SSE Reader
+        run: go test -fuzz=FuzzReader -fuzztime=5m ./internal/sse
+      - name: Fuzz Config Parse
+        run: go test -fuzz=FuzzParse -fuzztime=5m ./internal/config
+      - name: Fuzz Gossip MergeMessage
+        run: go test -fuzz=FuzzMergeMessage -fuzztime=5m ./internal/health

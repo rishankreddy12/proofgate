@@ -1,3 +1,4 @@
+// Package auth provides enterprise-grade capabilities, configuration, and structural components for the auth subsystem.
 package auth
 
 import (
@@ -6,13 +7,23 @@ import (
 	"time"
 )
 
+// lruItem represents an individual entry in the LRUCache.
 type lruItem[V any] struct {
 	key     string
 	val     V
 	expires time.Time
 }
 
-// LRUCache is a generic, thread-safe LRU cache with optional TTL expiration.
+// LRUCache implements a generic, thread-safe Least Recently Used (LRU) cache
+// featuring strict capacity bounds and Time-To-Live (TTL) expiration semantics.
+//
+// Concurrency Model: All operations are synchronized via a single sync.Mutex, guaranteeing
+// thread-safety across concurrent goroutines in high-throughput HTTP handlers.
+//
+// Complexity:
+// - Get: O(1) expected time.
+// - Set: O(1) expected time (including eviction).
+// - Remove/Purge: O(1) expected time.
 type LRUCache[V any] struct {
 	mu        sync.Mutex
 	capacity  int
@@ -21,8 +32,9 @@ type LRUCache[V any] struct {
 	evictList *list.List
 }
 
-// NewLRU creates a new LRUCache with bounded capacity and per-entry TTL.
-// A ttl <= 0 means entries do not expire by time.
+// NewLRU instantiates a new LRUCache with bounded capacity and a uniform per-entry TTL.
+// A ttl <= 0 disables temporal expiration entirely (entries are only evicted via capacity limits).
+// Default capacity is implicitly bounded to 1,000 items if an invalid value is supplied.
 func NewLRU[V any](capacity int, ttl time.Duration) *LRUCache[V] {
 	if capacity <= 0 {
 		capacity = 1000
@@ -35,8 +47,10 @@ func NewLRU[V any](capacity int, ttl time.Duration) *LRUCache[V] {
 	}
 }
 
-// Get returns the value for key if present and not expired.
-// If the entry has expired, it is removed and (zero, false) is returned.
+// Get retrieves the value associated with the specified key.
+// It actively enforces TTL expiration on reads: if the entry exists but has surpassed its TTL,
+// it is synchronously evicted and a miss is returned.
+// A successful read promotes the element to the front of the eviction list (marking it most-recently-used).
 func (c *LRUCache[V]) Get(key string) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -48,7 +62,7 @@ func (c *LRUCache[V]) Get(key string) (V, bool) {
 	}
 	item := el.Value.(*lruItem[V])
 	if c.ttl > 0 && time.Now().After(item.expires) {
-		c.evictElement(el)
+		c.evictElement(el) // Active expiration on read
 		var zero V
 		return zero, false
 	}
@@ -56,7 +70,10 @@ func (c *LRUCache[V]) Get(key string) (V, bool) {
 	return item.val, true
 }
 
-// Set adds or updates an entry in the LRU cache with current timestamp + TTL.
+// Set inserts or completely overrides an entry in the LRU cache.
+// Overriding an existing key promotes it to the front of the list and refreshes its TTL.
+// If the insertion causes the cache to exceed its defined capacity, the least-recently-used
+// elements are synchronously evicted until the constraint is satisfied.
 func (c *LRUCache[V]) Set(key string, val V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -66,6 +83,7 @@ func (c *LRUCache[V]) Set(key string, val V) {
 		expires = time.Now().Add(c.ttl)
 	}
 
+	// Update path
 	if el, ok := c.items[key]; ok {
 		c.evictList.MoveToFront(el)
 		item := el.Value.(*lruItem[V])
@@ -74,10 +92,12 @@ func (c *LRUCache[V]) Set(key string, val V) {
 		return
 	}
 
+	// Eviction path (enforce capacity bounds)
 	for c.evictList.Len() >= c.capacity {
 		c.evictOldest()
 	}
 
+	// Insertion path
 	item := &lruItem[V]{
 		key:     key,
 		val:     val,
@@ -87,6 +107,7 @@ func (c *LRUCache[V]) Set(key string, val V) {
 	c.items[key] = el
 }
 
+// evictOldest removes the element at the back of the list (Least Recently Used).
 func (c *LRUCache[V]) evictOldest() {
 	el := c.evictList.Back()
 	if el != nil {
@@ -94,20 +115,22 @@ func (c *LRUCache[V]) evictOldest() {
 	}
 }
 
+// evictElement executes the raw memory deallocation from both the doubly-linked list
+// and the underlying hash map index.
 func (c *LRUCache[V]) evictElement(el *list.Element) {
 	c.evictList.Remove(el)
 	item := el.Value.(*lruItem[V])
 	delete(c.items, item.key)
 }
 
-// Len returns the number of items currently in the cache.
+// Len returns the current number of items tracked in the cache.
 func (c *LRUCache[V]) Len() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.evictList.Len()
 }
 
-// Remove removes key from the cache if present.
+// Remove explicitly targets a specific key for synchronous cache eviction.
 func (c *LRUCache[V]) Remove(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -116,7 +139,8 @@ func (c *LRUCache[V]) Remove(key string) {
 	}
 }
 
-// Purge evicts all entries from the cache.
+// Purge acts as a global reset mechanism, synchronously dropping all map references
+// and re-initializing the linked list. This allows the GC to sweep all underlying structs.
 func (c *LRUCache[V]) Purge() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

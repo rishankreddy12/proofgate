@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -18,6 +19,8 @@ func redactConfig(cfg *config.Config) *config.Config {
 	return config.Redact(cfg)
 }
 
+// ExportUsageRow defines the core enterprise configuration and state for ExportUsageRow.
+// It is responsible for managing the lifecycle, validation, and schema of the ExportUsageRow entity.
 type ExportUsageRow struct {
 	TS               time.Time `json:"ts"`
 	RequestID        string    `json:"request_id"`

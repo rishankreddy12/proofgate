@@ -1,7 +1,10 @@
+// Package config provides enterprise-grade capabilities, configuration, and structural components for the config subsystem.
 package config
 
-// Redact returns a shallow copy of cfg with sensitive provider headers, API key environment variable names,
-// MCP server headers, and secret file paths replaced with "<redacted>".
+// Redact sanitizes a populated Config struct by stripping out sensitive
+// environment variable references, raw headers, and symmetric key files.
+// It returns a safe, shallow copy suitable for serialization, telemetry,
+// or unprivileged API exposure without leaking upstream provider credentials.
 func Redact(cfg *Config) *Config {
 	if cfg == nil {
 		return nil

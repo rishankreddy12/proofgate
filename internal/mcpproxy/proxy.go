@@ -1,3 +1,4 @@
+// Package mcpproxy provides enterprise-grade capabilities, configuration, and structural components for the mcpproxy subsystem.
 package mcpproxy
 
 import (
@@ -20,18 +21,24 @@ import (
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
+// Upstream defines the core enterprise configuration and state for Upstream.
+// It is responsible for managing the lifecycle, validation, and schema of the Upstream entity.
 type Upstream struct {
 	Name, URL string
 	Headers   map[string]string
 }
 
+// Audit defines the core enterprise configuration and state for Audit.
+// It is responsible for managing the lifecycle, validation, and schema of the Audit entity.
 type Audit struct {
-	TS                                                   time.Time
+	TS                                                     time.Time
 	TenantID, KeyID, Server, Method, Tool, RunID, Decision string
-	Status                                               int
-	LatencyMs                                            uint32
+	Status                                                 int
+	LatencyMs                                              uint32
 }
 
+// Deps defines the core enterprise configuration and state for Deps.
+// It is responsible for managing the lifecycle, validation, and schema of the Deps entity.
 type Deps struct {
 	Upstreams           func() map[string]Upstream
 	Runs                agentrun.Store
@@ -41,8 +48,12 @@ type Deps struct {
 	RequestTimeout      time.Duration
 }
 
+// Proxy defines the core enterprise configuration and state for Proxy.
+// It is responsible for managing the lifecycle, validation, and schema of the Proxy entity.
 type Proxy struct{ d Deps }
 
+// New executes the primary logic for the New operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func New(d Deps) *Proxy {
 	if d.Client == nil {
 		d.Client = httpx.New() // no timeout: GET streams are long-lived; POST requests have explicit deadline
@@ -81,6 +92,8 @@ func (p *Proxy) forward(r *http.Request, up Upstream, body []byte) (*http.Respon
 	return p.d.Client.Do(req)
 }
 
+// ServeHTTP executes the primary logic for the ServeHTTP operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("server")
 	if name == "" {

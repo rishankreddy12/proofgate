@@ -1,3 +1,4 @@
+// Package router provides enterprise-grade capabilities, configuration, and structural components for the router subsystem.
 package router
 
 import (
@@ -5,13 +6,15 @@ import (
 )
 
 // Capability defines the technical features and constraints of an LLM target.
+// Used by the Router to filter out incompatible models during execution planning.
 type Capability struct {
 	MaxContextTokens int   `json:"max_context_tokens" yaml:"max_context_tokens"`
 	SupportsVision   bool  `json:"supports_vision" yaml:"supports_vision"`
 	SupportsTools    *bool `json:"supports_tools" yaml:"supports_tools"`
 }
 
-// HasVisionContent checks if the request contains multimodal/image content.
+// HasVisionContent inspects the ChatRequest tree to determine if multimodal/image
+// payloads are present in any of the messages.
 func HasVisionContent(req *api.ChatRequest) bool {
 	if req == nil {
 		return false
@@ -28,7 +31,8 @@ func HasVisionContent(req *api.ChatRequest) bool {
 	return false
 }
 
-// HasToolContent checks if the request declares or uses tools.
+// HasToolContent inspects the ChatRequest tree to determine if the user has
+// supplied function/tool definitions or if prior tool-call history exists.
 func HasToolContent(req *api.ChatRequest) bool {
 	if req == nil {
 		return false
@@ -44,7 +48,9 @@ func HasToolContent(req *api.ChatRequest) bool {
 	return false
 }
 
-// Compatible returns true if target capabilities can safely execute the request.
+// Compatible evaluates a request against a target's hardware/API capabilities.
+// Returns true if the target can safely execute the request without triggering
+// fundamental upstream errors (e.g. 400 Context Length Exceeded).
 func Compatible(req *api.ChatRequest, cap Capability) bool {
 	if req == nil {
 		return true

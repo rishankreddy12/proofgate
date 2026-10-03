@@ -9,12 +9,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Decision defines the core enterprise configuration and state for Decision.
+// It is responsible for managing the lifecycle, validation, and schema of the Decision entity.
 type Decision struct {
 	Allowed    bool
 	TooLarge   bool
 	RetryAfter time.Duration
 }
 
+// Backend defines the core enterprise configuration and state for Backend.
+// It is responsible for managing the lifecycle, validation, and schema of the Backend entity.
 type Backend interface {
 	Take(ctx context.Context, tenantID string, p store.TenantPolicy, tokens int) (Decision, error)
 	Adjust(ctx context.Context, tenantID string, p store.TenantPolicy, delta int) error
@@ -78,10 +82,14 @@ redis.call('PEXPIRE', KEYS[1], 120000)
 return 1
 `)
 
+// Redis defines the core enterprise configuration and state for Redis.
+// It is responsible for managing the lifecycle, validation, and schema of the Redis entity.
 type Redis struct {
 	rdb redis.UniversalClient
 }
 
+// NewRedis executes the primary logic for the NewRedis operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewRedis(rdb redis.UniversalClient) *Redis { return &Redis{rdb: rdb} }
 
 func keys(tenantID string) (string, string) {
@@ -89,6 +97,8 @@ func keys(tenantID string) (string, string) {
 	return "rl:" + tag + ":req", "rl:" + tag + ":tok"
 }
 
+// Take executes the primary logic for the Take operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *Redis) Take(ctx context.Context, tenantID string, p store.TenantPolicy, tokens int) (Decision, error) {
 	rk, tk := keys(tenantID)
 	res, err := takeScript.Run(ctx, l.rdb, []string{rk, tk}, p.RPM, 1, p.TPM, tokens).Int64Slice()
@@ -105,6 +115,8 @@ func (l *Redis) Take(ctx context.Context, tenantID string, p store.TenantPolicy,
 	}
 }
 
+// Adjust executes the primary logic for the Adjust operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *Redis) Adjust(ctx context.Context, tenantID string, p store.TenantPolicy, delta int) error {
 	if delta == 0 || p.TPM == 0 {
 		return nil

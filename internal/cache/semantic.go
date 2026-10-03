@@ -1,3 +1,4 @@
+// Package cache provides enterprise-grade capabilities, configuration, and structural components for the cache subsystem.
 package cache
 
 import (
@@ -15,6 +16,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Semantic implements Approximate Nearest Neighbor (ANN) search over embeddings using RediSearch (Redis Stack).
+// It facilitates retrieving cached LLM completions when an inbound query is semantically similar,
+// even if phrasing/punctuation differ from the original request.
 type Semantic struct {
 	rdb     *redis.Client
 	mu      sync.Mutex
@@ -27,6 +31,8 @@ func NewSemantic(rdb *redis.Client) *Semantic { return &Semantic{rdb: rdb} }
 func indexName(dim int) string { return "idx:sc:" + strconv.Itoa(dim) }
 func prefix(dim int) string    { return "sc:" + strconv.Itoa(dim) + ":" }
 
+// ensureIndex dynamically provisions the RediSearch HNSW (Hierarchical Navigable Small World) index
+// required for vector similarity searches, keyed off the embedding dimensionality (e.g. 1536 for OpenAI).
 func (s *Semantic) ensureIndex(ctx context.Context, dim int) error {
 	if _, ok := s.indexes.Load(dim); ok {
 		return nil
@@ -76,6 +82,10 @@ func escapeTag(s string) string {
 	return b.String()
 }
 
+// Put serializes and ingests a new Semantic Cache entry into the RediSearch index.
+//
+// Note: It uses a pipeline to store the structured hash (with vector payload) and
+// register the key into any associative Tag sets for granular purging.
 func (s *Semantic) Put(ctx context.Context, tenantID, route, scope string, emb []float32, e Entry, ttl time.Duration) (string, error) {
 	dim := len(emb)
 	if err := s.ensureIndex(ctx, dim); err != nil {
@@ -99,6 +109,11 @@ func (s *Semantic) Put(ctx context.Context, tenantID, route, scope string, emb [
 	return key, err
 }
 
+// Nearest executes a k-NN (k-Nearest Neighbors) vector search in Redis.
+//
+// Strategy: It performs a pre-filter using TAG queries to restrict the search
+// space precisely to the calling Tenant and the rigid deterministic `scope` hash,
+// guaranteeing tenant isolation and configuration equivalence.
 func (s *Semantic) Nearest(ctx context.Context, tenantID, scope string, emb []float32) (*Match, error) {
 	dim := len(emb)
 	if err := s.ensureIndex(ctx, dim); err != nil {

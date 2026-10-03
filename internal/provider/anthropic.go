@@ -1,3 +1,4 @@
+// Package provider provides enterprise-grade capabilities, configuration, and structural components for the provider subsystem.
 package provider
 
 import (
@@ -14,6 +15,7 @@ import (
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
+// AnthropicConfig encapsulates the connection coordinates for an Anthropic REST endpoint.
 type AnthropicConfig struct {
 	Name             string
 	BaseURL          string // https://api.anthropic.com
@@ -22,12 +24,18 @@ type AnthropicConfig struct {
 	MaxResponseBytes int64
 }
 
+// Anthropic implements the provider.Provider interface for Anthropic's Claude Messages API.
+//
+// Architecture: Anthropic uses a highly disparate request/response schema from OpenAI (e.g., distinct
+// `system` prompt fields, unique ToolUse block structures, and explicit message stop tracking).
+// This adapter aggressively normalizes those differences into the canonical `api` shape.
 type Anthropic struct {
 	cfg              AnthropicConfig
 	client           *http.Client
 	maxResponseBytes int64
 }
 
+// NewAnthropic constructs a new Anthropic adapter with an isolated connection client.
 func NewAnthropic(cfg AnthropicConfig) *Anthropic {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	maxResp := cfg.MaxResponseBytes
@@ -37,6 +45,7 @@ func NewAnthropic(cfg AnthropicConfig) *Anthropic {
 	return &Anthropic{cfg: cfg, client: newClient(), maxResponseBytes: maxResp}
 }
 
+// Name returns the configured string identifier of the provider.
 func (p *Anthropic) Name() string { return p.cfg.Name }
 
 type aBlock struct {
@@ -89,6 +98,8 @@ func imageBlock(u string) aBlock {
 	return aBlock{Type: "image", Source: &aSource{Type: "url", URL: u}}
 }
 
+// toAnthropic performs the destructive mapping from the canonical OpenAI schema
+// into Anthropic's specific `messages` structure, separating system prompts and extracting image content.
 func toAnthropic(model string, req *api.ChatRequest, stream bool) (anthropicRequest, error) {
 	out := anthropicRequest{Model: model, MaxTokens: req.EffectiveMaxTokens(4096), Temperature: req.Temperature,
 		TopP: req.TopP, StopSequences: req.Stop, Stream: stream}
@@ -235,6 +246,7 @@ func (p *Anthropic) post(ctx context.Context, body anthropicRequest) (*http.Resp
 	return resp, nil
 }
 
+// Chat executes a blocking (non-streaming) completion request against the upstream Anthropic API.
 func (p *Anthropic) Chat(ctx context.Context, model string, req *api.ChatRequest) (*api.ChatResponse, error) {
 	body, err := toAnthropic(model, req, false)
 	if err != nil {
@@ -274,6 +286,7 @@ func (p *Anthropic) Chat(ctx context.Context, model string, req *api.ChatRequest
 		Choices: []api.Choice{{Message: msg, FinishReason: finishReason(ar.StopReason)}}, Usage: ar.Usage.toUsage()}, nil
 }
 
+// ChatStream executes a streaming completion request, parsing Anthropic's proprietary Server-Sent Events.
 func (p *Anthropic) ChatStream(ctx context.Context, model string, req *api.ChatRequest) (Stream, error) {
 	body, err := toAnthropic(model, req, true)
 	if err != nil {
@@ -326,6 +339,8 @@ func (s *anthropicStream) chunk(d api.ChunkDelta, finish *string) *api.ChatChunk
 		Choices: []api.ChunkChoice{{Delta: d, FinishReason: finish}}}
 }
 
+// Recv executes the primary logic for the Recv operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *anthropicStream) Recv() (*api.ChatChunk, error) {
 	for {
 		if s.done {
@@ -387,11 +402,14 @@ func (s *anthropicStream) Recv() (*api.ChatChunk, error) {
 	}
 }
 
+// Close executes the primary logic for the Close operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *anthropicStream) Close() error {
 	s.cancel()
 	return s.body.Close()
 }
 
+// Embed returns an error as Anthropic does not currently provide a first-party embeddings API.
 func (p *Anthropic) Embed(context.Context, string, *api.EmbeddingRequest) (*api.EmbeddingResponse, error) {
 	return nil, &Error{Provider: p.cfg.Name, Status: 400, Message: "anthropic does not offer embeddings"}
 }

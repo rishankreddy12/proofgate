@@ -36,3 +36,25 @@ func TestErrorMessage(t *testing.T) {
 	b, _ := json.Marshal(ErrorMessage(json.RawMessage(`7`), -32001, "tool not allowed"))
 	require.JSONEq(t, `{"jsonrpc":"2.0","id":7,"error":{"code":-32001,"message":"tool not allowed"}}`, string(b))
 }
+
+func FuzzParse(f *testing.F) {
+	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_file","arguments":{"path":"a.go"}}}`))
+	f.Add([]byte(`[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]`))
+	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`))
+	f.Add([]byte(`{}`))
+	f.Add([]byte(`[]`))
+	f.Add([]byte(``))
+	f.Add([]byte(`not json`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		msgs, _, err := Parse(data)
+		if err != nil {
+			return
+		}
+		for _, m := range msgs {
+			ToolCall(m)
+			if m.Result != nil {
+				FilterToolsList(m.Result, func(string) bool { return true })
+			}
+		}
+	})
+}

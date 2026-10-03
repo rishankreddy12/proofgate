@@ -1,3 +1,4 @@
+// Package guard provides enterprise-grade capabilities, configuration, and structural components for the guard subsystem.
 package guard
 
 import (
@@ -7,13 +8,19 @@ import (
 	"strings"
 )
 
+// Kind defines the core enterprise configuration and state for Kind.
+// It is responsible for managing the lifecycle, validation, and schema of the Kind entity.
 type Kind string
 
 const (
+	// Secret defines a specific variation or structural setting for Secret.
 	Secret Kind = "SECRET"
-	PII    Kind = "PII"
+	// PII defines a specific variation or structural setting for PII.
+	PII Kind = "PII"
 )
 
+// Span defines the core enterprise configuration and state for Span.
+// It is responsible for managing the lifecycle, validation, and schema of the Span entity.
 type Span struct {
 	Kind  Kind
 	Value string
@@ -29,6 +36,8 @@ var secretRegexes = []*regexp.Regexp{
 	regexp.MustCompile(`\b(?:hvs\.[A-Za-z0-9_-]{20,})\b`),
 }
 
+// Detect executes the primary logic for the Detect operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Detect(text string) []Span {
 	var spans []Span
 	for _, re := range secretRegexes {
@@ -58,18 +67,29 @@ func Detect(text string) []Span {
 	return spans
 }
 
+// PIIType defines the core enterprise configuration and state for PIIType.
+// It is responsible for managing the lifecycle, validation, and schema of the PIIType entity.
 type PIIType string
 
 const (
-	PIIEmail      PIIType = "EMAIL"
-	PIIIPv4       PIIType = "IPV4"
-	PIIIPv6       PIIType = "IPV6"
+	// PIIEmail defines a specific variation or structural setting for PIIEmail.
+	PIIEmail PIIType = "EMAIL"
+	// PIIIPv4 defines a specific variation or structural setting for PIIIPv4.
+	PIIIPv4 PIIType = "IPV4"
+	// PIIIPv6 defines a specific variation or structural setting for PIIIPv6.
+	PIIIPv6 PIIType = "IPV6"
+	// PIICreditCard defines a specific variation or structural setting for PIICreditCard.
 	PIICreditCard PIIType = "CREDIT_CARD"
-	PIIUSSSN      PIIType = "US_SSN"
-	PIIAadhaar    PIIType = "AADHAAR"
-	PIIPhone      PIIType = "PHONE"
+	// PIIUSSSN defines a specific variation or structural setting for PIIUSSSN.
+	PIIUSSSN PIIType = "US_SSN"
+	// PIIAadhaar defines a specific variation or structural setting for PIIAadhaar.
+	PIIAadhaar PIIType = "AADHAAR"
+	// PIIPhone defines a specific variation or structural setting for PIIPhone.
+	PIIPhone PIIType = "PHONE"
 )
 
+// PIIMatch defines the core enterprise configuration and state for PIIMatch.
+// It is responsible for managing the lifecycle, validation, and schema of the PIIMatch entity.
 type PIIMatch struct {
 	Type  PIIType
 	Value string
@@ -87,6 +107,8 @@ var (
 	phoneRegex = regexp.MustCompile(`(?:\+?[1-9]\d{0,2}[ -]?)?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}\b`)
 )
 
+// LuhnValid executes the primary logic for the LuhnValid operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func LuhnValid(s string) bool {
 	digits := make([]int, 0, len(s))
 	for _, ch := range s {
@@ -139,6 +161,8 @@ var verhoeffP = [][]int{
 	{7, 0, 4, 6, 9, 1, 3, 2, 5, 8},
 }
 
+// VerhoeffValid executes the primary logic for the VerhoeffValid operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func VerhoeffValid(s string) bool {
 	digits := make([]int, 0, len(s))
 	for _, ch := range s {
@@ -159,6 +183,8 @@ func VerhoeffValid(s string) bool {
 	return c == 0
 }
 
+// ValidSSN executes the primary logic for the ValidSSN operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func ValidSSN(s string) bool {
 	if len(s) != 11 || s[3] != '-' || s[6] != '-' {
 		return false
@@ -178,6 +204,8 @@ func ValidSSN(s string) bool {
 	return true
 }
 
+// DetectPII executes the primary logic for the DetectPII operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func DetectPII(text string) []PIIMatch {
 	var matches []PIIMatch
 

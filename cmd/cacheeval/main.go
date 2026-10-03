@@ -19,6 +19,8 @@ import (
 	"github.com/proofgate/proofgate/internal/proof"
 )
 
+// ReplayItem defines the core enterprise configuration and state for ReplayItem.
+// It is responsible for managing the lifecycle, validation, and schema of the ReplayItem entity.
 type ReplayItem struct {
 	ID     string `json:"id"`
 	Group  string `json:"group"`
@@ -26,6 +28,8 @@ type ReplayItem struct {
 	Prompt string `json:"prompt"`
 }
 
+// IndexedDoc defines the core enterprise configuration and state for IndexedDoc.
+// It is responsible for managing the lifecycle, validation, and schema of the IndexedDoc entity.
 type IndexedDoc struct {
 	ID        string
 	Group     string

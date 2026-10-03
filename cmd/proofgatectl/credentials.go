@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -167,4 +168,3 @@ func runSecrets(ctx context.Context, st *store.Store, args []string) {
 		die("usage: proofgatectl secrets rewrap")
 	}
 }
-

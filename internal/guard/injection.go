@@ -1,3 +1,4 @@
+// Package guard provides enterprise-grade capabilities, configuration, and structural components for the guard subsystem.
 package guard
 
 import (
@@ -5,6 +6,8 @@ import (
 	"regexp"
 )
 
+// Heuristic defines the core enterprise configuration and state for Heuristic.
+// It is responsible for managing the lifecycle, validation, and schema of the Heuristic entity.
 type Heuristic struct {
 	Name    string
 	Pattern *regexp.Regexp

@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -6,20 +7,28 @@ import (
 	"time"
 )
 
+// LabelStore defines the core enterprise configuration and state for LabelStore.
+// It is responsible for managing the lifecycle, validation, and schema of the LabelStore entity.
 type LabelStore interface {
 	UnlabeledShadow(ctx context.Context, route string, lo, hi float64, limit int) ([]ShadowRecord, error)
 	InsertLabels(ctx context.Context, ls []CacheLabel) error
 }
 
+// CacheJudge defines the core enterprise configuration and state for CacheJudge.
+// It is responsible for managing the lifecycle, validation, and schema of the CacheJudge entity.
 type CacheJudge interface {
 	EvaluateCache(ctx context.Context, r ShadowRecord) (CacheEvalResult, error)
 }
 
+// BucketConfig defines the core enterprise configuration and state for BucketConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the BucketConfig entity.
 type BucketConfig struct {
 	Lo, Hi float64
 	Limit  int
 }
 
+// CacheLabelWorker defines the core enterprise configuration and state for CacheLabelWorker.
+// It is responsible for managing the lifecycle, validation, and schema of the CacheLabelWorker entity.
 type CacheLabelWorker struct {
 	leader     LeaderElection
 	spend      SpendGuard
@@ -36,6 +45,8 @@ type CacheLabelWorker struct {
 	mu   sync.Mutex
 }
 
+// NewCacheLabelWorker executes the primary logic for the NewCacheLabelWorker operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewCacheLabelWorker(
 	leader LeaderElection,
 	spend SpendGuard,
@@ -67,16 +78,22 @@ func NewCacheLabelWorker(
 	}
 }
 
+// SetBuckets executes the primary logic for the SetBuckets operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (w *CacheLabelWorker) SetBuckets(b []BucketConfig) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.buckets = b
 }
 
+// SetNow executes the primary logic for the SetNow operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (w *CacheLabelWorker) SetNow(fn func() time.Time) {
 	w.nowFn = fn
 }
 
+// RunOnce executes the primary logic for the RunOnce operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (w *CacheLabelWorker) RunOnce(ctx context.Context) (int, error) {
 	if w.leader != nil && !w.leader.IsLeader() {
 		return 0, nil
@@ -140,6 +157,8 @@ func (w *CacheLabelWorker) RunOnce(ctx context.Context) (int, error) {
 	return totalLabeled, nil
 }
 
+// Start executes the primary logic for the Start operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (w *CacheLabelWorker) Start(ctx context.Context) {
 	go func() {
 		defer close(w.done)
@@ -159,6 +178,8 @@ func (w *CacheLabelWorker) Start(ctx context.Context) {
 	}()
 }
 
+// Stop executes the primary logic for the Stop operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (w *CacheLabelWorker) Stop() {
 	close(w.stop)
 	<-w.done

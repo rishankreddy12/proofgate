@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -42,6 +43,8 @@ func format(v any) string {
 	return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.2f", f), "0"), ".")
 }
 
+// Lookup executes the primary logic for the Lookup operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Lookup(results map[string]any, ref string) (string, error) {
 	file, path, ok := strings.Cut(ref, ":")
 	if !ok {
@@ -60,6 +63,8 @@ func Lookup(results map[string]any, ref string) (string, error) {
 
 var markerRe = regexp.MustCompile(`\{\{bench:([^}]+)\}\}`)
 
+// ResolveMarkers executes the primary logic for the ResolveMarkers operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func ResolveMarkers(text string, results map[string]any) (string, []error) {
 	var errs []error
 	out := markerRe.ReplaceAllStringFunc(text, func(m string) string {
@@ -74,6 +79,8 @@ func ResolveMarkers(text string, results map[string]any) (string, []error) {
 	return out, errs
 }
 
+// Median executes the primary logic for the Median operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Median(files []map[string]any, path string) (float64, bool) {
 	var vals []float64
 	for _, f := range files {

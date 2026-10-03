@@ -10,8 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
-
 func TestHedgeWinsWhenPrimaryIsSlow(t *testing.T) {
 	var cancelled atomic.Bool
 	fn := func(ctx context.Context, t Target) (string, error) {

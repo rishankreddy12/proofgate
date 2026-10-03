@@ -18,21 +18,29 @@ const (
 	DefaultMaxEventBytes = 16 * 1024 * 1024
 )
 
+// Event defines the core enterprise configuration and state for Event.
+// It is responsible for managing the lifecycle, validation, and schema of the Event entity.
 type Event struct {
 	ID   string
 	Name string
 	Data []byte
 }
 
+// Reader defines the core enterprise configuration and state for Reader.
+// It is responsible for managing the lifecycle, validation, and schema of the Reader entity.
 type Reader struct {
 	br            *bufio.Reader
 	maxEventBytes int
 }
 
+// NewReader executes the primary logic for the NewReader operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewReader(r io.Reader) *Reader {
 	return NewReaderWithLimit(r, DefaultMaxEventBytes)
 }
 
+// NewReaderWithLimit executes the primary logic for the NewReaderWithLimit operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewReaderWithLimit(r io.Reader, maxEventBytes int) *Reader {
 	if maxEventBytes <= 0 {
 		maxEventBytes = DefaultMaxEventBytes

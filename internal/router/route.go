@@ -11,14 +11,17 @@ import (
 	"github.com/proofgate/proofgate/internal/config"
 )
 
+// Target identifies a concrete upstream API capability (e.g. Provider: "openai", Model: "gpt-4o").
 type Target struct {
 	Provider string
 	Model    string
 }
 
+// String returns the normalized canonical target identifier ("provider/model").
 func (t Target) String() string { return t.Provider + "/" + t.Model }
 
-// ParseTarget splits "provider/model". Model ids may themselves contain '/', so only the first one splits.
+// ParseTarget attempts to unmarshal a canonical string identifier back into a Target struct.
+// Model ids may themselves contain '/', so only the first one splits.
 func ParseTarget(s string) (Target, bool) {
 	p, m, ok := strings.Cut(s, "/")
 	if !ok || p == "" || m == "" {
@@ -27,11 +30,14 @@ func ParseTarget(s string) (Target, bool) {
 	return Target{Provider: p, Model: m}, true
 }
 
+// RetryPolicy defines the backoff and maximum retry constraints for a specific route.
 type RetryPolicy struct {
 	MaxAttempts int
 	BaseDelay   time.Duration
 }
 
+// Route represents a logical mapping from a client-provided name to a set of underlying Targets,
+// along with execution strategies, timeout constraints, and pipeline capabilities (Caching, Guardrails).
 type Route struct {
 	Name              string
 	Targets           []Target
@@ -48,6 +54,8 @@ type Route struct {
 	Hedge             config.HedgeConfig
 }
 
+// Router maintains the immutable topological map of all valid models and route definitions.
+// It is constructed at startup and queried concurrently by thousands of requests.
 type Router struct {
 	routes       map[string]*Route
 	order        []*Route
@@ -58,6 +66,7 @@ type Router struct {
 	degraded     func(Target) bool
 }
 
+// New constructs a Router instance from the active ProofGate YAML configuration.
 func New(cfg *config.Config, br *Breakers) *Router {
 	r := &Router{
 		routes:       map[string]*Route{},
@@ -97,9 +106,10 @@ func New(cfg *config.Config, br *Breakers) *Router {
 	return r
 }
 
+// Routes returns the slice of all defined routes, maintaining stable configuration order.
 func (r *Router) Routes() []*Route { return r.order }
 
-// Targets returns all unique configured route targets.
+// Targets returns a deduplicated list of all concrete upstream models referenced by any route.
 func (r *Router) Targets() []Target {
 	var targets []Target
 	seen := make(map[Target]bool)
@@ -114,9 +124,11 @@ func (r *Router) Targets() []Target {
 	return targets
 }
 
-
-// Resolve maps the request's model field to a route: a configured route name, or "provider/model"
-// when the key allows direct targets.
+// Resolve maps the requested model string to an executable Route plan.
+//
+// Resolution Logic:
+// 1. Exact match against defined route alias in configuration (e.g. "prod-chat").
+// 2. Passthrough target if `allowDirect` is granted via API Key (e.g. "openai/gpt-4o").
 func (r *Router) Resolve(model string, allowDirect bool) (*Route, error) {
 	if rt, ok := r.routes[model]; ok {
 		return rt, nil
@@ -136,21 +148,26 @@ func (r *Router) Resolve(model string, allowDirect bool) (*Route, error) {
 	return nil, api.BadRequest(fmt.Sprintf("unknown route %q", model))
 }
 
-// blendedPrice is a 3:1 input:output weighting, a common rough mix for chat traffic.
+// blendedPrice computes a weighted pricing heuristic.
+// It assumes a 3:1 Input to Output token ratio, which is common for conversational AI traffic.
 func (r *Router) blendedPrice(t Target) float64 {
 	p := r.pricing[t.String()]
 	return (3*p.Input + p.Output) / 4
 }
 
-// SetHealth lets the planner push degraded targets behind healthy ones.
+// SetHealth binds the dynamic telemetry Tracker to the Router so that planning can
+// actively deprioritize degraded upstream targets.
 func (r *Router) SetHealth(degraded func(Target) bool) { r.degraded = degraded }
 
-// SetCapabilities configures target capability definitions for dynamic routing.
+// SetCapabilities injects dynamic capability metadata (MaxTokens, Vision, Tools) into the routing engine.
 func (r *Router) SetCapabilities(caps map[string]Capability) {
 	r.capabilities = caps
 }
 
-// Order orders targets: healthy -> slow (degraded) -> open (breaker tripped).
+// Order segregates and sorts the target plan into three tiers:
+// 1. Healthy targets (fast path).
+// 2. Degraded/Slow targets (soft failover).
+// 3. Open Breakers (last resort hard failover).
 func (r *Router) Order(plan []Target) []Target {
 	var healthy, slow, open []Target
 	for _, t := range plan {
@@ -166,8 +183,13 @@ func (r *Router) Order(plan []Target) []Target {
 	return append(append(healthy, slow...), open...)
 }
 
-// Plan orders targets by strategy, filtering out any targets incompatible with the optional request capabilities,
-// then moves degraded targets and open breakers to the end.
+// Plan constructs the final ordered execution slice for a request.
+//
+// Process:
+// 1. Base targets extracted from the resolved Route.
+// 2. Strict Capability Filtering: Removes targets that cannot fulfill the request payload (e.g. Missing Vision support).
+// 3. Strategy Sorting (e.g. "cheapest" orders by blended fiat cost).
+// 4. Health Segregation (via `Order`): Demotes degraded providers to the end of the line.
 func (r *Router) Plan(rt *Route, req ...*api.ChatRequest) []Target {
 	var request *api.ChatRequest
 	if len(req) > 0 {
@@ -187,7 +209,7 @@ func (r *Router) Plan(rt *Route, req ...*api.ChatRequest) []Target {
 	}
 
 	// If all targets were filtered out by strict capability checks, fall back to unfiltered
-	// targets so the request still attempts execution.
+	// targets so the request still attempts execution and can surface a clearer upstream 400 error.
 	if len(plan) == 0 {
 		plan = append([]Target(nil), rt.Targets...)
 	}

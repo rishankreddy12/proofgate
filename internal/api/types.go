@@ -1,4 +1,6 @@
 // Package api defines the OpenAI-compatible wire types that ProofGate exposes.
+// This package is responsible for standardizing the structures used for cross-provider
+// communication. Types here are marshaled/unmarshaled directly from HTTP JSON payloads.
 package api
 
 import (
@@ -6,41 +8,63 @@ import (
 	"strings"
 )
 
+// Message represents a single conversational turn in a ChatRequest or ChatResponse.
 type Message struct {
-	Role       string     `json:"role"`
-	Content    Content    `json:"content"`
-	Name       string     `json:"name,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	// Role is the author of the message (e.g., "system", "user", "assistant", "tool").
+	Role string `json:"role"`
+	// Content contains the message body (can be text or multimodal).
+	Content Content `json:"content"`
+	// Name optionally identifies the specific participant if there are multiple.
+	Name string `json:"name,omitempty"`
+	// ToolCalls specifies functions invoked by the assistant.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ToolCallID links a "tool" role message back to the ToolCall that invoked it.
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
+// Tool defines an external capability provided to the model.
 type Tool struct {
-	Type     string      `json:"type"`
+	// Type must be "function".
+	Type string `json:"type"`
+	// Function defines the signature of the capability.
 	Function FunctionDef `json:"function"`
 }
 
+// FunctionDef defines the signature and schema of a single tool.
 type FunctionDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Parameters is a JSON schema describing the expected arguments.
+	Parameters json.RawMessage `json:"parameters,omitempty"`
 }
 
+// ToolCall represents an invocation of a tool by the model.
 type ToolCall struct {
-	Index    *int         `json:"index,omitempty"` // set only in stream deltas
-	ID       string       `json:"id,omitempty"`
-	Type     string       `json:"type,omitempty"`
+	// Index is only populated during streaming to indicate the chunk position.
+	Index *int `json:"index,omitempty"`
+	// ID uniquely identifies this tool call invocation.
+	ID string `json:"id,omitempty"`
+	// Type is always "function".
+	Type string `json:"type,omitempty"`
+	// Function contains the actual execution data.
 	Function FunctionCall `json:"function"`
 }
 
+// FunctionCall contains the name and arguments for a specific tool execution.
 type FunctionCall struct {
-	Name      string `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Arguments is a stringified JSON object matching the Tool's Parameters schema.
 	Arguments string `json:"arguments"`
 }
 
+// StreamOptions provides advanced configuration for streaming responses.
 type StreamOptions struct {
+	// IncludeUsage dictates whether the final chunk of a stream should include a Usage block.
 	IncludeUsage bool `json:"include_usage"`
 }
 
+// ChatRequest represents the complete payload sent by a client to generate a chat completion.
+// It rigidly adheres to the OpenAI chat/completions API schema.
 type ChatRequest struct {
 	Model               string          `json:"model"`
 	Messages            []Message       `json:"messages"`
@@ -65,10 +89,12 @@ type ChatRequest struct {
 	TopLogprobs         *int            `json:"top_logprobs,omitempty"`
 }
 
+// PromptTokensDetails provides granular telemetry on caching efficiency.
 type PromptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
 }
 
+// Usage reports the exact token consumption of a request.
 type Usage struct {
 	PromptTokens        int                  `json:"prompt_tokens"`
 	CompletionTokens    int                  `json:"completion_tokens"`
@@ -76,7 +102,7 @@ type Usage struct {
 	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
 }
 
-// CachedTokens returns provider-side cached prompt tokens (0 if unknown).
+// CachedTokens is a helper to safely retrieve the number of tokens served from provider-side cache.
 func (u Usage) CachedTokens() int {
 	if u.PromptTokensDetails == nil {
 		return 0
@@ -84,12 +110,14 @@ func (u Usage) CachedTokens() int {
 	return u.PromptTokensDetails.CachedTokens
 }
 
+// Choice represents one generated candidate from the model.
 type Choice struct {
 	Index        int     `json:"index"`
 	Message      Message `json:"message"`
 	FinishReason string  `json:"finish_reason"`
 }
 
+// ChatResponse represents a monolithic, non-streaming reply from the LLM Gateway.
 type ChatResponse struct {
 	ID      string   `json:"id"`
 	Object  string   `json:"object"`
@@ -99,18 +127,21 @@ type ChatResponse struct {
 	Usage   *Usage   `json:"usage,omitempty"`
 }
 
+// ChunkDelta represents the incremental data received in a single stream event.
 type ChunkDelta struct {
 	Role      string     `json:"role,omitempty"`
 	Content   string     `json:"content,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
+// ChunkChoice wraps a ChunkDelta with its stream context.
 type ChunkChoice struct {
 	Index        int        `json:"index"`
 	Delta        ChunkDelta `json:"delta"`
 	FinishReason *string    `json:"finish_reason"`
 }
 
+// ChatChunk represents a single Server-Sent Event (SSE) payload during a streaming response.
 type ChatChunk struct {
 	ID      string        `json:"id"`
 	Object  string        `json:"object"`
@@ -120,6 +151,7 @@ type ChatChunk struct {
 	Usage   *Usage        `json:"usage,omitempty"`
 }
 
+// EmbeddingRequest defines the payload for text-to-vector generation.
 type EmbeddingRequest struct {
 	Model          string        `json:"model"`
 	Input          StringOrSlice `json:"input"`
@@ -128,12 +160,14 @@ type EmbeddingRequest struct {
 	User           string        `json:"user,omitempty"`
 }
 
+// Embedding represents a single generated vector.
 type Embedding struct {
 	Object    string    `json:"object"`
 	Index     int       `json:"index"`
 	Embedding []float32 `json:"embedding"`
 }
 
+// EmbeddingResponse represents the full output of a vector generation request.
 type EmbeddingResponse struct {
 	Object string      `json:"object"`
 	Data   []Embedding `json:"data"`
@@ -141,7 +175,9 @@ type EmbeddingResponse struct {
 	Usage  Usage       `json:"usage"`
 }
 
-// PromptText renders all messages as "role: text" lines. Used for estimates, caching and guardrails.
+// PromptText renders all messages into a unified block of "role: text" lines.
+// This flattened string is heavily relied upon for token estimation, semantic caching deduplication,
+// and prompt-injection guardrail scanning.
 func (r *ChatRequest) PromptText() string {
 	var b strings.Builder
 	for i, m := range r.Messages {
@@ -158,7 +194,9 @@ func (r *ChatRequest) PromptText() string {
 	return b.String()
 }
 
-// EffectiveMaxTokens returns max_completion_tokens, then max_tokens, then def.
+// EffectiveMaxTokens normalizes the output token limit.
+// It prioritizes max_completion_tokens (O1 schema), then max_tokens (Legacy schema),
+// falling back to a provided default if neither is set.
 func (r *ChatRequest) EffectiveMaxTokens(def int) int {
 	if r.MaxCompletionTokens != nil && *r.MaxCompletionTokens > 0 {
 		return *r.MaxCompletionTokens
@@ -169,8 +207,10 @@ func (r *ChatRequest) EffectiveMaxTokens(def int) int {
 	return def
 }
 
-// Clone returns a deep copy. JSON round-trip keeps it correct as fields are added; it is not on the hot path
-// except for guardrail redaction and shadow calls.
+// Clone returns a deep copy of the ChatRequest.
+// It uses a JSON round-trip to guarantee absolute structural integrity if nested schema fields are added.
+// This is not on the hot path; it is used specifically for guardrail redaction and background shadow calls
+// where mutating the original request pointer would trigger race conditions.
 func (r *ChatRequest) Clone() *ChatRequest {
 	b, err := json.Marshal(r)
 	if err != nil {
@@ -183,7 +223,8 @@ func (r *ChatRequest) Clone() *ChatRequest {
 	return &c
 }
 
-// Clone returns a deep copy of the message.
+// Clone returns a deep copy of the Message.
+// This is necessary to prevent data races when background agents modify tool calls or content in-flight.
 func (m Message) Clone() Message {
 	cp := m
 	cp.Content = m.Content.Clone()

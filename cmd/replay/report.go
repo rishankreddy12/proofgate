@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -5,6 +6,8 @@ import (
 	"time"
 )
 
+// Result defines the core enterprise configuration and state for Result.
+// It is responsible for managing the lifecycle, validation, and schema of the Result entity.
 type Result struct {
 	ReqID   string
 	Phase   int
@@ -15,6 +18,8 @@ type Result struct {
 	Latency time.Duration
 }
 
+// Report defines the core enterprise configuration and state for Report.
+// It is responsible for managing the lifecycle, validation, and schema of the Report entity.
 type Report struct {
 	Label          string  `json:"label"`
 	Dataset        string  `json:"dataset"`

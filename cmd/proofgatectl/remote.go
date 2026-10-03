@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -169,6 +170,8 @@ func runLogout(ctx context.Context, gf globalFlags) {
 	fmt.Println("Logged out successfully.")
 }
 
+// WhoamiResponse defines the core enterprise configuration and state for WhoamiResponse.
+// It is responsible for managing the lifecycle, validation, and schema of the WhoamiResponse entity.
 type WhoamiResponse struct {
 	UserID       string    `json:"user_id"`
 	Username     string    `json:"username"`
@@ -1006,4 +1009,3 @@ func runAdmin(ctx context.Context, gf globalFlags, args []string) {
 		die("unknown admin command: %s", args[0])
 	}
 }
-

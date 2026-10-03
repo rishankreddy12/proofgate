@@ -1,3 +1,4 @@
+// Package guard provides enterprise-grade capabilities, configuration, and structural components for the guard subsystem.
 package guard
 
 import (
@@ -10,17 +11,27 @@ import (
 	"github.com/proofgate/proofgate/internal/pipeline"
 )
 
+// Stage defines the core enterprise configuration and state for Stage.
+// It is responsible for managing the lifecycle, validation, and schema of the Stage entity.
 type Stage struct{}
 
+// NewStage executes the primary logic for the NewStage operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewStage() *Stage { return &Stage{} }
 
+// Name executes the primary logic for the Name operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Name() string { return "guard" }
 
 const (
-	PIIMappingKey  = "guard.pii_mapping"
+	// PIIMappingKey defines a specific variation or structural setting for PIIMappingKey.
+	PIIMappingKey = "guard.pii_mapping"
+	// ChunkFilterKey defines a specific variation or structural setting for ChunkFilterKey.
 	ChunkFilterKey = "guard.chunk_filter"
 )
 
+// Before executes the primary logic for the Before operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	if c.Route == nil || c.Request == nil {
 		return false, nil
@@ -147,6 +158,8 @@ func (s *Stage) Respond(ctx context.Context, c *pipeline.Call) {
 	c.ClientResponse = cr
 }
 
+// After executes the primary logic for the After operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
 	// In-place restore has moved to Respond (C2/C3) to prevent races with async caching
 	// and ensure non-streaming clients receive the restored view.

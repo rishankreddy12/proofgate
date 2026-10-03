@@ -1,3 +1,4 @@
+// Package secrets provides enterprise-grade capabilities, configuration, and structural components for the secrets subsystem.
 package secrets
 
 import (
@@ -16,8 +17,12 @@ import (
 	"github.com/proofgate/proofgate/internal/httpx"
 )
 
+// TokenSource defines the core enterprise configuration and state for TokenSource.
+// It is responsible for managing the lifecycle, validation, and schema of the TokenSource entity.
 type TokenSource func(ctx context.Context) (string, error)
 
+// StaticToken executes the primary logic for the StaticToken operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func StaticToken(tok string) TokenSource {
 	return func(context.Context) (string, error) {
 		if tok == "" {
@@ -48,6 +53,8 @@ func vaultPost(ctx context.Context, c *http.Client, url, token string, body, out
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+// KubernetesAuth executes the primary logic for the KubernetesAuth operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func KubernetesAuth(addr, role, jwtPath string, client *http.Client) TokenSource {
 	if client == nil {
 		client = httpx.New(httpx.WithTimeout(10 * time.Second))
@@ -83,12 +90,16 @@ func KubernetesAuth(addr, role, jwtPath string, client *http.Client) TokenSource
 	}
 }
 
+// VaultKEK defines the core enterprise configuration and state for VaultKEK.
+// It is responsible for managing the lifecycle, validation, and schema of the VaultKEK entity.
 type VaultKEK struct {
 	addr, key string
 	tokens    TokenSource
 	client    *http.Client
 }
 
+// NewVaultKEK executes the primary logic for the NewVaultKEK operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewVaultKEK(addr, key string, tokens TokenSource, client *http.Client) *VaultKEK {
 	if client == nil {
 		client = httpx.New(httpx.WithTimeout(10 * time.Second))
@@ -96,8 +107,12 @@ func NewVaultKEK(addr, key string, tokens TokenSource, client *http.Client) *Vau
 	return &VaultKEK{addr: strings.TrimRight(addr, "/"), key: key, tokens: tokens, client: client}
 }
 
+// ID executes the primary logic for the ID operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (v *VaultKEK) ID() string { return "vault:" + v.key }
 
+// Wrap executes the primary logic for the Wrap operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (v *VaultKEK) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	tok, err := v.tokens(ctx)
 	if err != nil {
@@ -115,6 +130,8 @@ func (v *VaultKEK) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	return []byte(out.Data.Ciphertext), nil
 }
 
+// Unwrap executes the primary logic for the Unwrap operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (v *VaultKEK) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
 	tok, err := v.tokens(ctx)
 	if err != nil {
@@ -130,4 +147,32 @@ func (v *VaultKEK) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
 		return nil, err
 	}
 	return base64.StdEncoding.DecodeString(out.Data.Plaintext)
+}
+
+// DynamicVaultResolver implements KEKResolver for Vault transit keys.
+// If it sees an ID like "vault:transit/tenant-t1-key", it extracts "transit/tenant-t1-key"
+// and creates a VaultKEK on the fly using the provided base address and token source.
+type DynamicVaultResolver struct {
+	addr   string
+	tokens TokenSource
+	client *http.Client
+}
+
+// NewDynamicVaultResolver executes the primary logic for the NewDynamicVaultResolver operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
+func NewDynamicVaultResolver(addr string, tokens TokenSource, client *http.Client) *DynamicVaultResolver {
+	if client == nil {
+		client = httpx.New(httpx.WithTimeout(10 * time.Second))
+	}
+	return &DynamicVaultResolver{addr: strings.TrimRight(addr, "/"), tokens: tokens, client: client}
+}
+
+// ResolveKEK executes the primary logic for the ResolveKEK operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
+func (d *DynamicVaultResolver) ResolveKEK(id string) (KEK, bool) {
+	if strings.HasPrefix(id, "vault:") {
+		key := strings.TrimPrefix(id, "vault:")
+		return NewVaultKEK(d.addr, key, d.tokens, d.client), true
+	}
+	return nil, false
 }

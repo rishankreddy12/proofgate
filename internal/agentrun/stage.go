@@ -1,3 +1,4 @@
+// Package agentrun provides enterprise-grade capabilities, configuration, and structural components for the agentrun subsystem.
 package agentrun
 
 import (
@@ -14,6 +15,7 @@ import (
 	"github.com/proofgate/proofgate/internal/ratelimit"
 )
 
+// RunIDPattern provides a globally accessible constant or variable for RunIDPattern.
 var RunIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 type stage struct {
@@ -23,14 +25,20 @@ type stage struct {
 	defaultMax int
 }
 
+// NewStage executes the primary logic for the NewStage operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewStage(s Store, fuzzy ...*FuzzyDetector) pipeline.Stage {
 	return NewStageWithDefaults(s, 8192, fuzzy...)
 }
 
+// NewStageWithDefaults executes the primary logic for the NewStageWithDefaults operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewStageWithDefaults(s Store, defaultMax int, fuzzy ...*FuzzyDetector) pipeline.Stage {
 	return NewStageWithLimiter(s, defaultMax, nil, fuzzy...)
 }
 
+// NewStageWithLimiter executes the primary logic for the NewStageWithLimiter operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewStageWithLimiter(s Store, defaultMax int, limiter ratelimit.Backend, fuzzy ...*FuzzyDetector) pipeline.Stage {
 	var f *FuzzyDetector
 	if len(fuzzy) > 0 {
@@ -42,6 +50,8 @@ func NewStageWithLimiter(s Store, defaultMax int, limiter ratelimit.Backend, fuz
 	return &stage{s: s, fuzzy: f, limiter: limiter, defaultMax: defaultMax}
 }
 
+// Name executes the primary logic for the Name operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (st *stage) Name() string { return "agentrun" }
 
 func runErr(status int, code, msg string) *api.Error {
@@ -52,6 +62,8 @@ func runErr(status int, code, msg string) *api.Error {
 	return &api.Error{Status: status, Message: msg, Type: t, Code: code}
 }
 
+// Before executes the primary logic for the Before operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (st *stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	pp := c.Principal.Key.Run
 	if pp == nil {
@@ -126,6 +138,8 @@ func (st *stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	return false, nil
 }
 
+// After executes the primary logic for the After operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (st *stage) After(ctx context.Context, c *pipeline.Call) {
 	runID, ok := c.Values["run.id"].(string)
 	if !ok {

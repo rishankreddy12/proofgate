@@ -1,3 +1,4 @@
+// Package store provides enterprise-grade capabilities, configuration, and structural components for the store subsystem.
 package store
 
 import (
@@ -7,6 +8,8 @@ import (
 	"time"
 )
 
+// AdminAuditEvent represents a single, immutable action taken by a gateway administrator.
+// It is used for compliance, forensic analysis, and rollback auditing.
 type AdminAuditEvent struct {
 	ID     int64           `json:"id"`
 	TS     time.Time       `json:"ts"`
@@ -18,6 +21,7 @@ type AdminAuditEvent struct {
 	Result string          `json:"result"`
 }
 
+// AdminAuditFilter defines the query parameters for filtering the admin audit log.
 type AdminAuditFilter struct {
 	Since  time.Time
 	Actor  string
@@ -25,6 +29,7 @@ type AdminAuditFilter struct {
 	Limit  int
 }
 
+// RecordAdminAudit synchronously writes an audit event to the database.
 func (s *Store) RecordAdminAudit(ctx context.Context, actor, action, target string, detail any, ip, result string) error {
 	if result == "" {
 		result = "ok"
@@ -42,10 +47,12 @@ func (s *Store) RecordAdminAudit(ctx context.Context, actor, action, target stri
 	return err
 }
 
+// ListAdminAudit retrieves the most recent audit events up to the specified limit.
 func (s *Store) ListAdminAudit(ctx context.Context, limit int) ([]AdminAuditEvent, error) {
 	return s.ListAdminAuditFiltered(ctx, AdminAuditFilter{Limit: limit})
 }
 
+// ListAdminAuditFiltered retrieves audit events matching the provided AdminAuditFilter.
 func (s *Store) ListAdminAuditFiltered(ctx context.Context, f AdminAuditFilter) ([]AdminAuditEvent, error) {
 	if f.Limit <= 0 {
 		f.Limit = 50

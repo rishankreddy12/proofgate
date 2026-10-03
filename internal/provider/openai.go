@@ -1,3 +1,4 @@
+// Package provider provides enterprise-grade capabilities, configuration, and structural components for the provider subsystem.
 package provider
 
 import (
@@ -14,6 +15,7 @@ import (
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
+// OpenAIConfig encapsulates the connection and authentication coordinates for an OpenAI-compatible target.
 type OpenAIConfig struct {
 	Name             string
 	BaseURL          string // e.g. https://api.openai.com/v1 or http://ollama:11434/v1
@@ -23,12 +25,15 @@ type OpenAIConfig struct {
 	MaxResponseBytes int64
 }
 
+// OpenAI implements the standard provider.Provider interface for OpenAI and fully OpenAI-compatible REST APIs.
+// This is the simplest adapter as the Gateway's internal `api` schemas are modeled explicitly after OpenAI.
 type OpenAI struct {
 	cfg              OpenAIConfig
 	client           *http.Client
 	maxResponseBytes int64
 }
 
+// NewOpenAI constructs a new OpenAI adapter with an isolated connection client.
 func NewOpenAI(cfg OpenAIConfig) *OpenAI {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	maxResp := cfg.MaxResponseBytes
@@ -38,8 +43,10 @@ func NewOpenAI(cfg OpenAIConfig) *OpenAI {
 	return &OpenAI{cfg: cfg, client: newClient(), maxResponseBytes: maxResp}
 }
 
+// Name returns the configured string identifier of the provider.
 func (p *OpenAI) Name() string { return p.cfg.Name }
 
+// post executes a generic HTTP POST, injecting resolved API keys and configured headers.
 func (p *OpenAI) post(ctx context.Context, path string, body any) (*http.Response, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -86,6 +93,7 @@ func withModel(req *api.ChatRequest, model string, stream bool) api.ChatRequest 
 	return out
 }
 
+// Chat executes a blocking (non-streaming) completion request against the upstream OpenAI API.
 func (p *OpenAI) Chat(ctx context.Context, model string, req *api.ChatRequest) (*api.ChatResponse, error) {
 	resp, err := p.post(ctx, "/chat/completions", withModel(req, model, false))
 	if err != nil {
@@ -104,6 +112,7 @@ func (p *OpenAI) Chat(ctx context.Context, model string, req *api.ChatRequest) (
 	return &out, nil
 }
 
+// ChatStream executes a streaming completion request, parsing the upstream Server-Sent Events.
 func (p *OpenAI) ChatStream(ctx context.Context, model string, req *api.ChatRequest) (Stream, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	resp, err := p.post(ctx, "/chat/completions", withModel(req, model, true))
@@ -121,6 +130,8 @@ type openAIStream struct {
 	cancel      context.CancelFunc
 }
 
+// Recv executes the primary logic for the Recv operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *openAIStream) Recv() (*api.ChatChunk, error) {
 	for {
 		ev, err := s.r.Next()
@@ -148,11 +159,14 @@ func (s *openAIStream) Recv() (*api.ChatChunk, error) {
 	}
 }
 
+// Close executes the primary logic for the Close operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *openAIStream) Close() error {
 	s.cancel()
 	return s.body.Close()
 }
 
+// Embed executes a batch vector projection via the OpenAI embeddings API.
 func (p *OpenAI) Embed(ctx context.Context, model string, req *api.EmbeddingRequest) (*api.EmbeddingResponse, error) {
 	body := *req
 	body.Model = model

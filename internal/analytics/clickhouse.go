@@ -1,3 +1,4 @@
+// Package analytics provides enterprise-grade capabilities, configuration, and structural components for the analytics subsystem.
 package analytics
 
 import (
@@ -15,6 +16,8 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
+// Open executes the primary logic for the Open operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Open(ctx context.Context, dsn string) (driver.Conn, error) {
 	opts, err := clickhouse.ParseDSN(dsn)
 	if err != nil {
@@ -27,6 +30,8 @@ func Open(ctx context.Context, dsn string) (driver.Conn, error) {
 	return conn, conn.Ping(ctx)
 }
 
+// Migrate executes the primary logic for the Migrate operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Migrate(ctx context.Context, conn driver.Conn) error {
 	entries, err := migrations.ReadDir("migrations")
 	if err != nil {

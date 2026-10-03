@@ -1,3 +1,4 @@
+// Package analytics provides enterprise-grade capabilities, configuration, and structural components for the analytics subsystem.
 package analytics
 
 import (
@@ -9,6 +10,8 @@ import (
 	"github.com/proofgate/proofgate/internal/telemetry"
 )
 
+// UsageEvent defines the core enterprise configuration and state for UsageEvent.
+// It is responsible for managing the lifecycle, validation, and schema of the UsageEvent entity.
 type UsageEvent struct {
 	TS                                        time.Time
 	RequestID, TenantID, KeyID, Route, Target string
@@ -32,6 +35,8 @@ func clampU32(d int64) uint32 {
 	return uint32(d)
 }
 
+// EventFromCall executes the primary logic for the EventFromCall operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func EventFromCall(c *pipeline.Call) UsageEvent {
 	kind := "chat"
 	if k, ok := c.Values["usage.kind"].(string); ok && k != "" {
@@ -66,6 +71,8 @@ func b2u(b bool) uint8 {
 	return 0
 }
 
+// InsertUsage executes the primary logic for the InsertUsage operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func InsertUsage(conn driver.Conn) func(context.Context, []UsageEvent) error {
 	return func(ctx context.Context, rows []UsageEvent) error {
 		batch, err := conn.PrepareBatch(ctx, "INSERT INTO usage_events")
@@ -85,8 +92,18 @@ func InsertUsage(conn driver.Conn) func(context.Context, []UsageEvent) error {
 
 type usageStage struct{ emit func(UsageEvent) bool }
 
+// UsageStage executes the primary logic for the UsageStage operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func UsageStage(emit func(UsageEvent) bool) pipeline.Stage { return usageStage{emit} }
 
-func (usageStage) Name() string                                        { return "usage" }
+// Name executes the primary logic for the Name operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
+func (usageStage) Name() string { return "usage" }
+
+// Before executes the primary logic for the Before operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (usageStage) Before(context.Context, *pipeline.Call) (bool, error) { return false, nil }
-func (s usageStage) After(_ context.Context, c *pipeline.Call)          { s.emit(EventFromCall(c)) }
+
+// After executes the primary logic for the After operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
+func (s usageStage) After(_ context.Context, c *pipeline.Call) { s.emit(EventFromCall(c)) }

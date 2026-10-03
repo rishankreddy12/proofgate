@@ -1,3 +1,4 @@
+// Package adminauth provides enterprise-grade capabilities, configuration, and structural components for the adminauth subsystem.
 package adminauth
 
 import (
@@ -8,10 +9,14 @@ import (
 )
 
 var (
-	ErrPasswordTooShort       = errors.New("password must be at least 12 characters")
-	ErrPasswordTooLong        = errors.New("password cannot exceed 72 bytes")
+	// ErrPasswordTooShort defines a specific variation or structural setting for ErrPasswordTooShort.
+	ErrPasswordTooShort = errors.New("password must be at least 12 characters")
+	// ErrPasswordTooLong defines a specific variation or structural setting for ErrPasswordTooLong.
+	ErrPasswordTooLong = errors.New("password cannot exceed 72 bytes")
+	// ErrPasswordEqualsUsername defines a specific variation or structural setting for ErrPasswordEqualsUsername.
 	ErrPasswordEqualsUsername = errors.New("password cannot equal username")
-	ErrPasswordBreached       = errors.New("password appears in known data breaches and cannot be used")
+	// ErrPasswordBreached defines a specific variation or structural setting for ErrPasswordBreached.
+	ErrPasswordBreached = errors.New("password appears in known data breaches and cannot be used")
 )
 
 // BreachedPasswordChecker checks whether a password appears in compromised password databases.

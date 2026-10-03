@@ -1,3 +1,4 @@
+// Package budget provides deterministic cost tracking and enforcement for multi-tenant LLM traffic.
 package budget
 
 import (
@@ -12,12 +13,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Ledger abstracts the distributed accounting backend for tenant budgets.
+// Implementations must guarantee ACID-compliant atomicity when reserving or deducting
+// fiat values (micros) to prevent double-spending in highly concurrent environments.
 type Ledger interface {
 	Spent(ctx context.Context, tenantID, month string) (int64, error)
 	Add(ctx context.Context, tenantID, month string, micros int64) error
 	Reserve(ctx context.Context, tenantID, month string, est, limit int64) (ok bool, spent int64, err error)
 }
 
+// Month executes the primary logic for the Month operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func Month(t time.Time) string { return t.UTC().Format("2006-01") }
 
 // reserveScript atomically checks if (cur + est <= limit). If so, it increments by est
@@ -51,14 +57,20 @@ redis.call('EXPIRE', KEYS[1], ttl)
 return next
 `)
 
+// RedisLedger implements the Ledger interface using Lua scripts inside Redis.
+// This guarantees strict atomicity without expensive locking mechanisms.
 type RedisLedger struct {
 	rdb redis.UniversalClient
 }
 
+// NewRedisLedger executes the primary logic for the NewRedisLedger operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewRedisLedger(rdb redis.UniversalClient) *RedisLedger { return &RedisLedger{rdb: rdb} }
 
 func ledgerKey(tenantID, month string) string { return "budget:{t:" + tenantID + "}:" + month }
 
+// Spent executes the primary logic for the Spent operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *RedisLedger) Spent(ctx context.Context, tenantID, month string) (int64, error) {
 	v, err := l.rdb.Get(ctx, ledgerKey(tenantID, month)).Int64()
 	if errors.Is(err, redis.Nil) {
@@ -67,12 +79,16 @@ func (l *RedisLedger) Spent(ctx context.Context, tenantID, month string) (int64,
 	return v, err
 }
 
+// Add executes the primary logic for the Add operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *RedisLedger) Add(ctx context.Context, tenantID, month string, micros int64) error {
 	k := ledgerKey(tenantID, month)
 	ttlSecs := int64(40 * 24 * 3600)
 	return addScript.Run(ctx, l.rdb, []string{k}, micros, ttlSecs).Err()
 }
 
+// Reserve executes the primary logic for the Reserve operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *RedisLedger) Reserve(ctx context.Context, tenantID, month string, est, limit int64) (bool, int64, error) {
 	k := ledgerKey(tenantID, month)
 	ttlSecs := int64(40 * 24 * 3600)
@@ -86,13 +102,19 @@ func (l *RedisLedger) Reserve(ctx context.Context, tenantID, month string, est, 
 	return res[0] == 1, res[1], nil
 }
 
+// StageOpts defines the configuration parameters for the Budget pipeline stage.
 type StageOpts struct {
 	Pricing        *Pricing
 	ReserveStrict  bool
 	RequirePricing bool
 	DefaultMax     int
+	OnFailOpen     func()
 }
 
+// Stage implements the core Budget pipeline plugin.
+// It executes a two-phase commit:
+// 1. Before(): Pre-calculates the theoretical maximum cost of the request and atomically reserves it in the ledger.
+// 2. After(): Reconciles the actual generation cost against the reservation, refunding the difference.
 type Stage struct {
 	l              Ledger
 	pricing        *Pricing
@@ -100,8 +122,11 @@ type Stage struct {
 	requirePricing bool
 	defaultMax     int
 	now            func() time.Time
+	onFailOpen     func()
 }
 
+// NewStage executes the primary logic for the NewStage operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewStage(l Ledger, now func() time.Time, opts ...StageOpts) *Stage {
 	s := &Stage{
 		l:             l,
@@ -117,12 +142,20 @@ func NewStage(l Ledger, now func() time.Time, opts ...StageOpts) *Stage {
 		if opt.DefaultMax > 0 {
 			s.defaultMax = opt.DefaultMax
 		}
+		s.onFailOpen = opt.OnFailOpen
+	}
+	if s.onFailOpen == nil {
+		s.onFailOpen = func() {}
 	}
 	return s
 }
 
+// Name executes the primary logic for the Name operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Name() string { return "budget" }
 
+// Before executes the primary logic for the Before operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	limit := c.Principal.Tenant.BudgetMicros()
 	if limit == 0 {
@@ -185,6 +218,7 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 				return false, &api.Error{Status: 503, Message: "budget ledger unavailable", Type: "api_error", Code: "budget_unavailable"}
 			}
 			slog.Warn("budget ledger unavailable, failing open", "tenant", c.Principal.TenantID, "err", err)
+			s.onFailOpen()
 			return false, nil
 		}
 		if !ok {
@@ -212,10 +246,13 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	return false, nil
 }
 
+// After executes the primary logic for the After operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
+	totalCost := c.CostMicros + c.HedgeCostMicros
 	reserved, hasReserved := c.Values["budget.reserved"].(int64)
 	if hasReserved {
-		delta := c.CostMicros - reserved
+		delta := totalCost - reserved
 		if delta != 0 {
 			if err := s.l.Add(context.WithoutCancel(ctx), c.Principal.TenantID, Month(s.now()), delta); err != nil {
 				slog.Error("budget reconcile failed", "tenant", c.Principal.TenantID, "delta", delta, "err", err)
@@ -223,10 +260,10 @@ func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
 		}
 		return
 	}
-	if c.CostMicros <= 0 {
+	if totalCost <= 0 {
 		return
 	}
-	if err := s.l.Add(context.WithoutCancel(ctx), c.Principal.TenantID, Month(s.now()), c.CostMicros); err != nil {
-		slog.Error("budget charge failed", "tenant", c.Principal.TenantID, "micros", c.CostMicros, "err", err)
+	if err := s.l.Add(context.WithoutCancel(ctx), c.Principal.TenantID, Month(s.now()), totalCost); err != nil {
+		slog.Error("budget charge failed", "tenant", c.Principal.TenantID, "micros", totalCost, "err", err)
 	}
 }

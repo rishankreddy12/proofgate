@@ -1,3 +1,4 @@
+// Package router provides enterprise-grade capabilities, configuration, and structural components for the router subsystem.
 package router
 
 import (
@@ -10,7 +11,9 @@ import (
 	"github.com/proofgate/proofgate/internal/api"
 )
 
-// HedgeBudget caps hedges at maxExtra × requests over the last 1,000 requests.
+// HedgeBudget is a concurrency-safe token bucket mechanism ensuring that
+// speculative "hedge" requests do not overwhelm upstream providers.
+// It limits hedges to a maximum ratio (`maxExtra`) relative to total traffic volume.
 type HedgeBudget struct {
 	mu       sync.Mutex
 	maxExtra float64
@@ -18,8 +21,10 @@ type HedgeBudget struct {
 	hedges   float64
 }
 
+// NewHedgeBudget initializes a new budget manager enforcing the specified hedge-to-request ratio.
 func NewHedgeBudget(maxExtra float64) *HedgeBudget { return &HedgeBudget{maxExtra: maxExtra} }
 
+// decay shifts the sliding window to prevent indefinite accumulation.
 func (b *HedgeBudget) decay() {
 	if b.requests > 1000 { // keep a sliding window without storing timestamps
 		f := 1000 / b.requests
@@ -27,6 +32,7 @@ func (b *HedgeBudget) decay() {
 	}
 }
 
+// Request registers a standard inbound request with the budget window.
 func (b *HedgeBudget) Request() {
 	b.mu.Lock()
 	b.requests++
@@ -34,6 +40,7 @@ func (b *HedgeBudget) Request() {
 	b.mu.Unlock()
 }
 
+// Allow evaluates if the current traffic volume permits an additional hedged request.
 func (b *HedgeBudget) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -50,6 +57,13 @@ type outcome[T any] struct {
 	t   Target
 }
 
+// ExecuteHedged runs an execution plan using Tail-Latency Hedging.
+//
+// Protocol:
+// 1. It dispatches a request to the primary target in the plan.
+// 2. It waits for the `delay` duration (e.g. 95th percentile TTFT).
+// 3. If the primary has not returned, it dispatches a secondary parallel request to the next target in the plan.
+// 4. It races the two requests. The first to return successfully is returned to the client, and the loser is eagerly cancelled.
 func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br *Breakers, deadline time.Duration, delay time.Duration,
 	allow func() bool, fn func(ctx context.Context, t Target) (T, error), discard func(T)) (T, Result, bool, error) {
 	var zero T
@@ -58,6 +72,7 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 		ctx, cancel = context.WithTimeout(ctx, deadline)
 		defer cancel()
 	}
+
 	run := func(plan []Target) (T, Result, error) {
 		var v T
 		res, err := Execute(ctx, plan, rp, br, 0, func(ctx context.Context, t Target) error {
@@ -69,10 +84,13 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 		})
 		return v, res, err
 	}
+
+	// If only 1 target exists, fallback to standard linear execution
 	if len(plan) < 2 {
 		v, res, err := run(plan)
 		return v, res, false, err
 	}
+
 	var won bool
 	ctxA, cancelA := context.WithCancel(ctx)
 	defer func() {
@@ -86,6 +104,7 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 			cancelB()
 		}
 	}()
+
 	results := make(chan outcome[T], 2)
 	launch := func(c context.Context, t Target) {
 		go func() {
@@ -93,11 +112,15 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 			results <- outcome[T]{v: v, err: err, t: t}
 		}()
 	}
+
+	// Step 1: Launch primary
 	launch(ctxA, plan[0])
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
+
 	hedged, pending := false, 1
 	var lastErr error
+
 	finish := func(winner outcome[T], cancelOther context.CancelFunc) (T, Result, bool, error) {
 		won = true
 		cancelOther()
@@ -119,15 +142,18 @@ func ExecuteHedged[T any](ctx context.Context, plan []Target, rp RetryPolicy, br
 		}
 		return winner.v, Result{Target: winner.t, Attempts: attempts}, hedged, nil
 	}
+
 	for {
 		select {
 		case <-timer.C:
+			// Step 2 & 3: Delay elapsed, launch secondary if budget allows
 			if !hedged && allow() {
 				hedged = true
 				pending++
 				launch(ctxB, plan[1])
 			}
 		case o := <-results:
+			// Step 4: A request finished, process outcome
 			if o.err == nil {
 				if o.t == plan[0] {
 					return finish(o, cancelB)

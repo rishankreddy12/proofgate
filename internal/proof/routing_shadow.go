@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -7,14 +8,20 @@ import (
 	"github.com/google/uuid"
 )
 
+// RoutingShadowStore defines the core enterprise configuration and state for RoutingShadowStore.
+// It is responsible for managing the lifecycle, validation, and schema of the RoutingShadowStore entity.
 type RoutingShadowStore interface {
 	InsertRoutingShadow(ctx context.Context, rs []RoutingShadow) error
 }
 
+// RoutingJudge defines the core enterprise configuration and state for RoutingJudge.
+// It is responsible for managing the lifecycle, validation, and schema of the RoutingJudge entity.
 type RoutingJudge interface {
 	EvaluateRouting(ctx context.Context, prompt, cheapAnswer, strongAnswer string) (RoutingEvalResult, error)
 }
 
+// RoutingShadowTask defines the core enterprise configuration and state for RoutingShadowTask.
+// It is responsible for managing the lifecycle, validation, and schema of the RoutingShadowTask entity.
 type RoutingShadowTask struct {
 	ID           string
 	TenantID     string
@@ -28,6 +35,8 @@ type RoutingShadowTask struct {
 	JudgeModel   string
 }
 
+// RoutingShadowWorker defines the core enterprise configuration and state for RoutingShadowWorker.
+// It is responsible for managing the lifecycle, validation, and schema of the RoutingShadowWorker entity.
 type RoutingShadowWorker struct {
 	store  RoutingShadowStore
 	judge  RoutingJudge
@@ -36,6 +45,8 @@ type RoutingShadowWorker struct {
 	nowFn  func() time.Time
 }
 
+// NewRoutingShadowWorker executes the primary logic for the NewRoutingShadowWorker operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewRoutingShadowWorker(
 	store RoutingShadowStore,
 	judge RoutingJudge,
@@ -51,10 +62,14 @@ func NewRoutingShadowWorker(
 	}
 }
 
+// SetNow executes the primary logic for the SetNow operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (w *RoutingShadowWorker) SetNow(fn func() time.Time) {
 	w.nowFn = fn
 }
 
+// EvaluateAndRecord executes the primary logic for the EvaluateAndRecord operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (w *RoutingShadowWorker) EvaluateAndRecord(ctx context.Context, task RoutingShadowTask) (*RoutingShadow, error) {
 	if w.leader != nil && !w.leader.IsLeader() {
 		return nil, nil

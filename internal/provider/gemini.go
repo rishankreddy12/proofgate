@@ -1,3 +1,4 @@
+// Package provider provides enterprise-grade capabilities, configuration, and structural components for the provider subsystem.
 package provider
 
 import (
@@ -15,6 +16,7 @@ import (
 	"github.com/proofgate/proofgate/internal/sse"
 )
 
+// GeminiConfig encapsulates the connection coordinates for a Google Gemini REST endpoint.
 type GeminiConfig struct {
 	Name             string
 	BaseURL          string // https://generativelanguage.googleapis.com
@@ -23,12 +25,18 @@ type GeminiConfig struct {
 	MaxResponseBytes int64
 }
 
+// Gemini implements the provider.Provider interface for Google's Gemini /v1beta/ REST APIs.
+//
+// Architecture: Gemini's structure diverges significantly, utilizing recursive `parts`, distinct
+// `SystemInstruction` containers, and explicit `FunctionDeclaration` wrappers.
+// This adapter normalizes these differences.
 type Gemini struct {
 	cfg              GeminiConfig
 	client           *http.Client
 	maxResponseBytes int64
 }
 
+// NewGemini constructs a new Gemini adapter with an isolated connection client.
 func NewGemini(cfg GeminiConfig) *Gemini {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	maxResp := cfg.MaxResponseBytes
@@ -38,13 +46,14 @@ func NewGemini(cfg GeminiConfig) *Gemini {
 	return &Gemini{cfg: cfg, client: newClient(), maxResponseBytes: maxResp}
 }
 
+// Name returns the configured string identifier of the provider.
 func (p *Gemini) Name() string { return p.cfg.Name }
 
 type gPart struct {
-	Text             string        `json:"text,omitempty"`
-	FunctionCall     *gFuncCall    `json:"functionCall,omitempty"`
-	FunctionResponse *gFuncResp    `json:"functionResponse,omitempty"`
-	InlineData       *gInlineData  `json:"inlineData,omitempty"`
+	Text             string       `json:"text,omitempty"`
+	FunctionCall     *gFuncCall   `json:"functionCall,omitempty"`
+	FunctionResponse *gFuncResp   `json:"functionResponse,omitempty"`
+	InlineData       *gInlineData `json:"inlineData,omitempty"`
 }
 type gFuncCall struct {
 	Name string          `json:"name"`
@@ -111,6 +120,8 @@ func cleanSchema(raw json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(walk(v))
 }
 
+// toGemini performs the structural mapping from the canonical OpenAI schema
+// into Gemini's specific `contents` payload, reshaping tools and multimodal attachments.
 func toGemini(req *api.ChatRequest) (geminiRequest, error) {
 	var out geminiRequest
 	names := map[string]string{} // tool call id -> function name
@@ -207,7 +218,7 @@ func (r *gResponse) usage() *api.Usage {
 	}
 	m := r.UsageMetadata
 	return &api.Usage{PromptTokens: m.PromptTokenCount, CompletionTokens: m.CandidatesTokenCount,
-		TotalTokens: m.PromptTokenCount + m.CandidatesTokenCount,
+		TotalTokens:         m.PromptTokenCount + m.CandidatesTokenCount,
 		PromptTokensDetails: &api.PromptTokensDetails{CachedTokens: m.CachedContentTokenCount}}
 }
 
@@ -258,6 +269,7 @@ func (p *Gemini) post(ctx context.Context, path string, body any) (*http.Respons
 	return resp, nil
 }
 
+// Chat executes a blocking (non-streaming) completion request against the upstream Gemini API.
 func (p *Gemini) Chat(ctx context.Context, model string, req *api.ChatRequest) (*api.ChatResponse, error) {
 	body, err := toGemini(req)
 	if err != nil {
@@ -299,6 +311,7 @@ func (p *Gemini) Chat(ctx context.Context, model string, req *api.ChatRequest) (
 		Choices: []api.Choice{{Message: msg, FinishReason: finish}}, Usage: gr.usage()}, nil
 }
 
+// ChatStream executes a streaming completion request, utilizing Gemini's alternative SSE endpoint structure.
 func (p *Gemini) ChatStream(ctx context.Context, model string, req *api.ChatRequest) (Stream, error) {
 	body, err := toGemini(req)
 	if err != nil {
@@ -324,6 +337,8 @@ type geminiStream struct {
 	finished    bool
 }
 
+// Recv executes the primary logic for the Recv operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *geminiStream) Recv() (*api.ChatChunk, error) {
 	for {
 		ev, err := s.r.Next()
@@ -377,11 +392,14 @@ func (s *geminiStream) Recv() (*api.ChatChunk, error) {
 	}
 }
 
+// Close executes the primary logic for the Close operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *geminiStream) Close() error {
 	s.cancel()
 	return s.body.Close()
 }
 
+// Embed executes a batch vector projection via the Gemini batchEmbedContents API.
 func (p *Gemini) Embed(ctx context.Context, model string, req *api.EmbeddingRequest) (*api.EmbeddingResponse, error) {
 	type item struct {
 		Model   string   `json:"model"`

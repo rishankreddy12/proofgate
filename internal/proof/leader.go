@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -8,10 +9,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// LeaderElection defines the core enterprise configuration and state for LeaderElection.
+// It is responsible for managing the lifecycle, validation, and schema of the LeaderElection entity.
 type LeaderElection interface {
 	IsLeader() bool
 }
 
+// Leader defines the core enterprise configuration and state for Leader.
+// It is responsible for managing the lifecycle, validation, and schema of the Leader entity.
 type Leader struct {
 	rdb        redis.UniversalClient
 	instanceID string
@@ -25,6 +30,8 @@ type Leader struct {
 	done     chan struct{}
 }
 
+// NewLeader executes the primary logic for the NewLeader operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewLeader(rdb redis.UniversalClient, instanceID, key string, ttl, renewEvery time.Duration) *Leader {
 	if key == "" {
 		key = "proof:leader"
@@ -46,6 +53,8 @@ func NewLeader(rdb redis.UniversalClient, instanceID, key string, ttl, renewEver
 	}
 }
 
+// IsLeader executes the primary logic for the IsLeader operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *Leader) IsLeader() bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -74,6 +83,8 @@ else
 end
 `)
 
+// Step executes the primary logic for the Step operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *Leader) Step(ctx context.Context) {
 	if l.IsLeader() {
 		// Attempt renewal
@@ -91,6 +102,8 @@ func (l *Leader) Step(ctx context.Context) {
 	}
 }
 
+// Start executes the primary logic for the Start operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *Leader) Start(ctx context.Context) {
 	go func() {
 		defer close(l.done)
@@ -122,6 +135,8 @@ func (l *Leader) release(ctx context.Context) {
 	}
 }
 
+// Stop executes the primary logic for the Stop operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (l *Leader) Stop() {
 	close(l.stop)
 	<-l.done

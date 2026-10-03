@@ -1,3 +1,4 @@
+// Package store provides enterprise-grade capabilities, configuration, and structural components for the store subsystem.
 package store
 
 import (
@@ -7,6 +8,8 @@ import (
 	"github.com/proofgate/proofgate/internal/secrets"
 )
 
+// CredentialInfo represents metadata about an upstream provider credential.
+// Actual plaintext keys are never stored; they are wrapped via KMS and represented by `secrets.Sealed`.
 type CredentialInfo struct {
 	Provider  string
 	Version   int
@@ -16,6 +19,8 @@ type CredentialInfo struct {
 	Active    bool
 }
 
+// PutCredential stores a new KMS-encrypted credential for the given provider.
+// It safely increments the credential version and sets it as the active credential.
 func (s *Store) PutCredential(ctx context.Context, provider string, sealed secrets.Sealed, actor string) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -39,6 +44,7 @@ func (s *Store) PutCredential(ctx context.Context, provider string, sealed secre
 	return v, tx.Commit(ctx)
 }
 
+// ActiveCredential retrieves the currently active, encrypted credential for a provider.
 func (s *Store) ActiveCredential(ctx context.Context, provider string) (secrets.Sealed, int, error) {
 	var out secrets.Sealed
 	var v int
@@ -58,6 +64,8 @@ func (s *Store) ActiveTenantCredential(ctx context.Context, tenantID, provider s
 	return s.ActiveCredential(ctx, provider)
 }
 
+// ListCredentials enumerates the metadata of all credentials (active and inactive)
+// without returning the ciphertext.
 func (s *Store) ListCredentials(ctx context.Context) ([]CredentialInfo, error) {
 	rows, err := s.pool.Query(ctx, `SELECT provider, version, kek_id, created_at, created_by, active
 		FROM provider_credentials ORDER BY provider, version`)
@@ -76,6 +84,8 @@ func (s *Store) ListCredentials(ctx context.Context) ([]CredentialInfo, error) {
 	return out, rows.Err()
 }
 
+// ReplaceWrapped updates an existing credential with a newly encrypted payload.
+// Used primarily during Key Encryption Key (KEK) rotation via KMS.
 func (s *Store) ReplaceWrapped(ctx context.Context, provider string, version int, sealed secrets.Sealed) error {
 	_, err := s.pool.Exec(ctx, `UPDATE provider_credentials SET kek_id=$3, wrapped_dek=$4 WHERE provider=$1 AND version=$2`,
 		provider, version, sealed.KEKID, sealed.WrappedDEK)

@@ -63,8 +63,8 @@ func TestPlanFiltersByCapabilities(t *testing.T) {
 			{
 				Name: "chat",
 				Targets: []config.TargetConfig{
-					{Provider: "openai", Model: "gpt-4o"},         // 128k, vision
-					{Provider: "local", Model: "llama-3-8b"},       // 32k, no vision
+					{Provider: "openai", Model: "gpt-4o"},             // 128k, vision
+					{Provider: "local", Model: "llama-3-8b"},          // 32k, no vision
 					{Provider: "anthropic", Model: "claude-3-sonnet"}, // 200k, vision
 				},
 				Strategy: "fallback",

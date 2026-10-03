@@ -66,21 +66,21 @@ func TestEventIDAndRawWrite(t *testing.T) {
 
 func TestReaderFragmentation(t *testing.T) {
 	in := "data: {\"test\":\"fragmentation\"}\n\ndata: [DONE]\n\n"
-	
+
 	// iotest.OneByteReader forces bufio.Reader to read exactly 1 byte per Read() call,
 	// perfectly simulating worst-case arbitrary TCP fragmentation across the network.
 	// This proves that bufio.Reader.ReadBytes('\n') handles TCP streams natively.
 	fragReader := iotest.OneByteReader(strings.NewReader(in))
 	r := NewReader(fragReader)
-	
+
 	e, err := r.Next()
 	require.NoError(t, err)
 	require.Equal(t, `{"test":"fragmentation"}`, string(e.Data))
-	
+
 	e, err = r.Next()
 	require.NoError(t, err)
 	require.Equal(t, "[DONE]", string(e.Data))
-	
+
 	_, err = r.Next()
 	require.ErrorIs(t, err, io.EOF)
 }
@@ -101,3 +101,20 @@ func TestReaderEnforcesEventLimit(t *testing.T) {
 	require.Equal(t, strings.Repeat("X", 100), string(ev.Data))
 }
 
+func FuzzReader(f *testing.F) {
+	f.Add([]byte(": comment\n\nevent: message_start\ndata: {\"a\":1}\n\ndata: [DONE]\n\n"))
+	f.Add([]byte("data: x\r\n\r\ndata: y"))
+	f.Add([]byte("id: 42\nevent: message\ndata: {}\n\n"))
+	f.Add([]byte("data: " + strings.Repeat("A", 200) + "\n\n"))
+	f.Add([]byte("\n\n\n"))
+	f.Add([]byte(""))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		r := NewReaderWithLimit(strings.NewReader(string(data)), 1024*1024)
+		for i := 0; i < 100; i++ {
+			_, err := r.Next()
+			if err != nil {
+				return
+			}
+		}
+	})
+}

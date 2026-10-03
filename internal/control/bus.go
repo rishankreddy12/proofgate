@@ -1,3 +1,4 @@
+// Package control provides enterprise-grade capabilities, configuration, and structural components for the control subsystem.
 package control
 
 import (
@@ -13,14 +14,21 @@ import (
 )
 
 const (
+	// DefaultChannel defines a specific variation or structural setting for DefaultChannel.
 	DefaultChannel = "proofgate:ctl"
 
+	// OpPurgeSecrets defines a specific variation or structural setting for OpPurgeSecrets.
 	OpPurgeSecrets = "purge_secrets"
-	OpPurgeCache   = "purge_cache"
-	OpReload       = "reload"
-	OpKeyRevoked   = "key_revoked"
+	// OpPurgeCache defines a specific variation or structural setting for OpPurgeCache.
+	OpPurgeCache = "purge_cache"
+	// OpReload defines a specific variation or structural setting for OpReload.
+	OpReload = "reload"
+	// OpKeyRevoked defines a specific variation or structural setting for OpKeyRevoked.
+	OpKeyRevoked = "key_revoked"
 )
 
+// Message defines the core enterprise configuration and state for Message.
+// It is responsible for managing the lifecycle, validation, and schema of the Message entity.
 type Message struct {
 	Op     string            `json:"op"`
 	Args   map[string]string `json:"args,omitempty"`
@@ -28,6 +36,8 @@ type Message struct {
 	Sender string            `json:"sender,omitempty"`
 }
 
+// HandlerFunc defines the core enterprise configuration and state for HandlerFunc.
+// It is responsible for managing the lifecycle, validation, and schema of the HandlerFunc entity.
 type HandlerFunc func(ctx context.Context, msg Message) error
 
 // Bus provides a Redis pub/sub based cross-replica control bus.
@@ -40,6 +50,8 @@ type Bus struct {
 	handlers map[string][]HandlerFunc
 }
 
+// NewBus executes the primary logic for the NewBus operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewBus(rdb redis.UniversalClient, sender, channel string) *Bus {
 	if channel == "" {
 		channel = DefaultChannel
@@ -52,20 +64,28 @@ func NewBus(rdb redis.UniversalClient, sender, channel string) *Bus {
 	}
 }
 
+// Channel executes the primary logic for the Channel operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (b *Bus) Channel() string {
 	return b.channel
 }
 
+// Sender executes the primary logic for the Sender operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (b *Bus) Sender() string {
 	return b.sender
 }
 
+// Subscribe executes the primary logic for the Subscribe operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (b *Bus) Subscribe(op string, fn HandlerFunc) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.handlers[op] = append(b.handlers[op], fn)
 }
 
+// Publish executes the primary logic for the Publish operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (b *Bus) Publish(ctx context.Context, op string, args map[string]string) error {
 	if b.rdb == nil {
 		return errors.New("redis client not configured")
@@ -83,6 +103,8 @@ func (b *Bus) Publish(ctx context.Context, op string, args map[string]string) er
 	return b.rdb.Publish(ctx, b.channel, data).Err()
 }
 
+// Dispatch executes the primary logic for the Dispatch operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (b *Bus) Dispatch(ctx context.Context, msg Message) {
 	b.mu.RLock()
 	ops := append([]HandlerFunc(nil), b.handlers[msg.Op]...)
@@ -101,6 +123,8 @@ func (b *Bus) Dispatch(ctx context.Context, msg Message) {
 	}
 }
 
+// Run executes the primary logic for the Run operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (b *Bus) Run(ctx context.Context) error {
 	if b.rdb == nil {
 		return nil

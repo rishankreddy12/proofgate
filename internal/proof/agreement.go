@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -7,15 +8,21 @@ import (
 	"github.com/proofgate/proofgate/internal/stats"
 )
 
+// PairedLabelsStore defines the core enterprise configuration and state for PairedLabelsStore.
+// It is responsible for managing the lifecycle, validation, and schema of the PairedLabelsStore entity.
 type PairedLabelsStore interface {
 	HumanAndJudge(ctx context.Context, route string) ([]bool, []bool, error)
 }
 
 const (
+	// DefaultMinPairs defines a specific variation or structural setting for DefaultMinPairs.
 	DefaultMinPairs = 50
+	// DefaultMinKappa defines a specific variation or structural setting for DefaultMinKappa.
 	DefaultMinKappa = 0.60
 )
 
+// AgreementResult defines the core enterprise configuration and state for AgreementResult.
+// It is responsible for managing the lifecycle, validation, and schema of the AgreementResult entity.
 type AgreementResult struct {
 	Kappa   float64
 	Pairs   int
@@ -23,6 +30,8 @@ type AgreementResult struct {
 	Message string
 }
 
+// CheckAgreement executes the primary logic for the CheckAgreement operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func CheckAgreement(ctx context.Context, store PairedLabelsStore, route string, minPairs int, minKappa float64) (AgreementResult, error) {
 	if minPairs <= 0 {
 		minPairs = DefaultMinPairs

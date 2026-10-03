@@ -1,3 +1,4 @@
+// Package store provides enterprise-grade capabilities, configuration, and structural components for the store subsystem.
 package store
 
 import (
@@ -10,8 +11,10 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// Migrate applies migrations in filename order inside one transaction each, holding an advisory lock
-// so that several replicas starting at once do not race.
+// Migrate applies all pending SQL schema migrations to the database.
+//
+// Architecture: It utilizes PostgreSQL advisory locks (`pg_advisory_lock`) to guarantee
+// serialized, race-free schema upgrades even when multiple Gateway instances boot concurrently.
 func (s *Store) Migrate(ctx context.Context) error {
 	conn, err := s.pool.Acquire(ctx)
 	if err != nil {

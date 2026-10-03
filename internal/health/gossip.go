@@ -1,3 +1,4 @@
+// Package health implements the distributed health-checking and circuit-breaking mesh.
 package health
 
 import (
@@ -19,7 +20,9 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// Gossip handles UDP-based cross-replica health metrics exchange.
+// Gossip handles highly-available, low-latency UDP-based health metric exchange across ProofGate replicas.
+// It allows disparate Gateway nodes in a cluster to instantly share awareness of provider degradations
+// (e.g., Azure OpenAI goes down) without requiring a centralized coordinator or Redis backbone.
 type Gossip struct {
 	addr     string
 	peers    []string

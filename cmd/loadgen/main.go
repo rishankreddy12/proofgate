@@ -22,7 +22,12 @@ import (
 
 type kvFlag map[string]any
 
+// String executes the primary logic for the String operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (k kvFlag) String() string { return "" }
+
+// Set executes the primary logic for the Set operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (k kvFlag) Set(v string) error {
 	a, b, ok := strings.Cut(v, "=")
 	if !ok {

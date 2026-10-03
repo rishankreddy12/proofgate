@@ -1,3 +1,4 @@
+// Package mockllm provides enterprise-grade capabilities, configuration, and structural components for the mockllm subsystem.
 package mockllm
 
 import (

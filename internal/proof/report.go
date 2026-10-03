@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -6,10 +7,14 @@ import (
 	"time"
 )
 
+// SavingsStore defines the core enterprise configuration and state for SavingsStore.
+// It is responsible for managing the lifecycle, validation, and schema of the SavingsStore entity.
 type SavingsStore interface {
 	RoutingSavings(ctx context.Context, route string, since time.Time) (actual, counterfactual int64, cheapShare float64, n int, err error)
 }
 
+// SavingsReport defines the core enterprise configuration and state for SavingsReport.
+// It is responsible for managing the lifecycle, validation, and schema of the SavingsReport entity.
 type SavingsReport struct {
 	Route             string  `json:"route"`
 	Requests          int     `json:"requests"`
@@ -23,6 +28,8 @@ type SavingsReport struct {
 	CIHigh            float64 `json:"ci_high,omitempty"`
 }
 
+// GenerateSavingsReport executes the primary logic for the GenerateSavingsReport operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func GenerateSavingsReport(ctx context.Context, store SavingsStore, deltasStore RoutingDeltasStore, route string, since time.Time) (SavingsReport, error) {
 	if since.IsZero() {
 		since = time.Now().Add(-30 * 24 * time.Hour)

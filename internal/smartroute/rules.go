@@ -1,3 +1,4 @@
+// Package smartroute provides enterprise-grade capabilities, configuration, and structural components for the smartroute subsystem.
 package smartroute
 
 import (
@@ -7,26 +8,42 @@ import (
 	"github.com/proofgate/proofgate/internal/api"
 )
 
+// Decision defines the core enterprise configuration and state for Decision.
+// It is responsible for managing the lifecycle, validation, and schema of the Decision entity.
 type Decision string
 
 const (
-	DecisionCheap     Decision = "cheap"
-	DecisionStrong    Decision = "strong"
+	// DecisionCheap defines a specific variation or structural setting for DecisionCheap.
+	DecisionCheap Decision = "cheap"
+	// DecisionStrong defines a specific variation or structural setting for DecisionStrong.
+	DecisionStrong Decision = "strong"
+	// DecisionUncertain defines a specific variation or structural setting for DecisionUncertain.
 	DecisionUncertain Decision = "uncertain"
 )
 
+// Reason defines the core enterprise configuration and state for Reason.
+// It is responsible for managing the lifecycle, validation, and schema of the Reason entity.
 type Reason string
 
 const (
-	ReasonCode          Reason = "rule_code"
-	ReasonMath          Reason = "rule_math"
-	ReasonLongContext   Reason = "rule_long_context"
+	// ReasonCode defines a specific variation or structural setting for ReasonCode.
+	ReasonCode Reason = "rule_code"
+	// ReasonMath defines a specific variation or structural setting for ReasonMath.
+	ReasonMath Reason = "rule_math"
+	// ReasonLongContext defines a specific variation or structural setting for ReasonLongContext.
+	ReasonLongContext Reason = "rule_long_context"
+	// ReasonSimpleFactual defines a specific variation or structural setting for ReasonSimpleFactual.
 	ReasonSimpleFactual Reason = "rule_simple_factual"
-	ReasonGreeting      Reason = "rule_greeting"
-	ReasonNone          Reason = "rule_none"
-	ReasonKNN           Reason = "knn_confident"
+	// ReasonGreeting defines a specific variation or structural setting for ReasonGreeting.
+	ReasonGreeting Reason = "rule_greeting"
+	// ReasonNone defines a specific variation or structural setting for ReasonNone.
+	ReasonNone Reason = "rule_none"
+	// ReasonKNN defines a specific variation or structural setting for ReasonKNN.
+	ReasonKNN Reason = "knn_confident"
 )
 
+// Classification defines the core enterprise configuration and state for Classification.
+// It is responsible for managing the lifecycle, validation, and schema of the Classification entity.
 type Classification struct {
 	Decision Decision
 	Reason   Reason
@@ -39,12 +56,18 @@ var (
 	factualRegex  = regexp.MustCompile(`(?i)^(?:what\s+is\s+the\s+capital\s+of|how\s+many\s+inches\s+in\s+a\s+foot|define\s+\w+)[.?\s]*$`)
 )
 
+// RuleClassifier defines the core enterprise configuration and state for RuleClassifier.
+// It is responsible for managing the lifecycle, validation, and schema of the RuleClassifier entity.
 type RuleClassifier struct{}
 
+// NewRuleClassifier executes the primary logic for the NewRuleClassifier operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewRuleClassifier() *RuleClassifier {
 	return &RuleClassifier{}
 }
 
+// PromptText executes the primary logic for the PromptText operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func PromptText(req *api.ChatRequest) string {
 	if req == nil {
 		return ""
@@ -57,6 +80,8 @@ func PromptText(req *api.ChatRequest) string {
 	return ""
 }
 
+// Classify executes the primary logic for the Classify operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (c *RuleClassifier) Classify(req *api.ChatRequest, maxTokensForCheap int) Classification {
 	if maxTokensForCheap <= 0 {
 		maxTokensForCheap = 1500

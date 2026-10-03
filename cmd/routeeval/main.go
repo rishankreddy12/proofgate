@@ -19,6 +19,8 @@ import (
 	"github.com/proofgate/proofgate/internal/stats"
 )
 
+// BenchmarkItem defines the core enterprise configuration and state for BenchmarkItem.
+// It is responsible for managing the lifecycle, validation, and schema of the BenchmarkItem entity.
 type BenchmarkItem struct {
 	Query    string `json:"query"`
 	Category string `json:"category"` // "code", "math", "greeting", "factual"
@@ -150,18 +152,18 @@ func main() {
 			_ = os.MkdirAll(dir, 0755)
 		}
 		res := map[string]any{
-			"total_queries":           total,
-			"cheap_count":             cheapCount,
-			"strong_count":            strongCount,
-			"cheap_share_pct":         math.Round(cheapShare*100) / 100,
-			"counterfactual_usd":      counterfactualCost,
-			"actual_usd":              actualCost,
-			"dollars_saved_usd":       dollarsSaved,
-			"percent_saved":           math.Round(pctSaved*100) / 100,
-			"quality_delta_mean":      math.Round(meanDelta*10000) / 10000,
-			"quality_delta_ci_low":    math.Round(ciLow*10000) / 10000,
-			"quality_delta_ci_high":   math.Round(ciHigh*10000) / 10000,
-			"quality_verified":        ciHigh >= -0.05,
+			"total_queries":         total,
+			"cheap_count":           cheapCount,
+			"strong_count":          strongCount,
+			"cheap_share_pct":       math.Round(cheapShare*100) / 100,
+			"counterfactual_usd":    counterfactualCost,
+			"actual_usd":            actualCost,
+			"dollars_saved_usd":     dollarsSaved,
+			"percent_saved":         math.Round(pctSaved*100) / 100,
+			"quality_delta_mean":    math.Round(meanDelta*10000) / 10000,
+			"quality_delta_ci_low":  math.Round(ciLow*10000) / 10000,
+			"quality_delta_ci_high": math.Round(ciHigh*10000) / 10000,
+			"quality_verified":      ciHigh >= -0.05,
 		}
 		b, err := json.MarshalIndent(res, "", "  ")
 		if err == nil {

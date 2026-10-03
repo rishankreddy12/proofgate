@@ -146,11 +146,13 @@ Configures OpenTelemetry distributed tracing and export.
 | `telemetry` | object | - | OpenTelemetry exporter configuration. |
 | `otlp_endpoint` | string | `""` | OTLP/HTTP collector endpoint. Falls back to `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable. |
 | `service_name` | string | `"proofgate"` | Service name attribute attached to emitted spans. |
+| `sample_rate` | float | `1.0` | Trace sampling ratio between 0.0 (none) and 1.0 (all). Controls OTLP export volume. |
 
 ```yaml
 telemetry:
   otlp_endpoint: http://otel-collector:4318
   service_name: proofgate
+  sample_rate: 1.0
 ```
 
 ---

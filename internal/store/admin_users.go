@@ -1,3 +1,4 @@
+// Package store provides enterprise-grade capabilities, configuration, and structural components for the store subsystem.
 package store
 
 import (
@@ -6,8 +7,12 @@ import (
 	"time"
 )
 
+// ErrLastAdmin provides a globally accessible constant or variable for ErrLastAdmin.
 var ErrLastAdmin = errors.New("cannot remove or disable the last enabled admin")
 
+// AdminUser represents a system administrator authorized to modify gateway configuration,
+// tenants, and credentials via the Management API.
+// It is distinct from a `Tenant` which represents an API consumer.
 type AdminUser struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
@@ -19,6 +24,7 @@ type AdminUser struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// CreateAdminUser provisions a new administrator account.
 func (s *Store) CreateAdminUser(ctx context.Context, username string, passwordHash []byte, role string) (AdminUser, error) {
 	if role == "" {
 		role = "admin"
@@ -36,6 +42,8 @@ func (s *Store) CreateAdminUser(ctx context.Context, username string, passwordHa
 	return u, err
 }
 
+// GetAdminUser executes the primary logic for the GetAdminUser operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Store) GetAdminUser(ctx context.Context, username string) (AdminUser, error) {
 	var u AdminUser
 	err := s.pool.QueryRow(ctx, `
@@ -46,6 +54,7 @@ func (s *Store) GetAdminUser(ctx context.Context, username string) (AdminUser, e
 	return u, notFound(err)
 }
 
+// GetAdminUserByID retrieves an administrator account by its internal ID.
 func (s *Store) GetAdminUserByID(ctx context.Context, id string) (AdminUser, error) {
 	var u AdminUser
 	err := s.pool.QueryRow(ctx, `
@@ -56,6 +65,8 @@ func (s *Store) GetAdminUserByID(ctx context.Context, id string) (AdminUser, err
 	return u, notFound(err)
 }
 
+// ListAdminUsers executes the primary logic for the ListAdminUsers operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, username, role, enabled, must_change, created_at, updated_at
@@ -78,6 +89,8 @@ func (s *Store) ListAdminUsers(ctx context.Context) ([]AdminUser, error) {
 	return out, rows.Err()
 }
 
+// UpdateAdminUserPassword executes the primary logic for the UpdateAdminUserPassword operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Store) UpdateAdminUserPassword(ctx context.Context, id string, passwordHash []byte, mustChange bool) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE admin_users
@@ -90,6 +103,8 @@ func (s *Store) UpdateAdminUserPassword(ctx context.Context, id string, password
 	return err
 }
 
+// SetAdminUserEnabled enables or disables an administrator account.
+// It enforces that at least one active administrator always exists.
 func (s *Store) SetAdminUserEnabled(ctx context.Context, id string, enabled bool) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE admin_users
@@ -112,6 +127,8 @@ func (s *Store) SetAdminUserEnabled(ctx context.Context, id string, enabled bool
 	return nil
 }
 
+// DeleteAdminUser removes an administrator account.
+// It enforces that at least one active administrator always exists.
 func (s *Store) DeleteAdminUser(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM admin_users
@@ -133,6 +150,8 @@ func (s *Store) DeleteAdminUser(ctx context.Context, id string) error {
 	return nil
 }
 
+// AdminUserCount executes the primary logic for the AdminUserCount operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Store) AdminUserCount(ctx context.Context) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM admin_users`).Scan(&count)

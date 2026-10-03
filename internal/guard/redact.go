@@ -1,3 +1,4 @@
+// Package guard provides enterprise-grade capabilities, configuration, and structural components for the guard subsystem.
 package guard
 
 import (
@@ -5,6 +6,8 @@ import (
 	"strings"
 )
 
+// RedactResult defines the core enterprise configuration and state for RedactResult.
+// It is responsible for managing the lifecycle, validation, and schema of the RedactResult entity.
 type RedactResult struct {
 	Redacted string
 	Mapping  map[string]string // placeholder -> original

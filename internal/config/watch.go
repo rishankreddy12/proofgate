@@ -1,3 +1,4 @@
+// Package config provides enterprise-grade capabilities, configuration, and structural components for the config subsystem.
 package config
 
 import (
@@ -11,6 +12,7 @@ import (
 
 // Watcher polls the config file and calls onChange with each new valid config.
 // Polling (not inotify) works with Kubernetes ConfigMap symlink swaps.
+// This allows the gateway to hot-reload routes, secrets, and pricing dynamically.
 type Watcher struct {
 	path     string
 	interval time.Duration
@@ -19,6 +21,7 @@ type Watcher struct {
 	lastSum  [32]byte
 }
 
+// NewWatcher initializes a file-polling configuration watcher.
 func NewWatcher(path string, interval time.Duration, onChange func(*Config)) *Watcher {
 	w := &Watcher{path: path, interval: interval, onChange: onChange}
 	if b, err := os.ReadFile(path); err == nil {
@@ -27,6 +30,7 @@ func NewWatcher(path string, interval time.Duration, onChange func(*Config)) *Wa
 	return w
 }
 
+// Run starts the blocking polling loop. It continues until the context is canceled.
 func (w *Watcher) Run(ctx context.Context) {
 	t := time.NewTicker(w.interval)
 	defer t.Stop()
@@ -45,6 +49,8 @@ func (w *Watcher) Run(ctx context.Context) {
 // Reload forces a reload even if the file is unchanged (used by POST /admin/reload).
 func (w *Watcher) Reload() error { return w.check(true) }
 
+// check executes a single synchronized tick, reading the file, computing the hash,
+// parsing the AST, and dispatching the hook if changes are detected.
 func (w *Watcher) check(force bool) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

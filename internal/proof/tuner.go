@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -8,6 +9,8 @@ import (
 	"github.com/proofgate/proofgate/internal/stats"
 )
 
+// CurvePoint defines the core enterprise configuration and state for CurvePoint.
+// It is responsible for managing the lifecycle, validation, and schema of the CurvePoint entity.
 type CurvePoint struct {
 	Threshold    float64 `json:"threshold"`
 	HitRate      float64 `json:"hit_rate"`
@@ -17,6 +20,8 @@ type CurvePoint struct {
 	SampleCount  int     `json:"n"`
 }
 
+// CurveInputStore defines the core enterprise configuration and state for CurveInputStore.
+// It is responsible for managing the lifecycle, validation, and schema of the CurveInputStore entity.
 type CurveInputStore interface {
 	CurveInputs(ctx context.Context, route string, since time.Time) ([]float64, []LabeledPoint, error)
 }
@@ -87,6 +92,8 @@ func TuneCacheFromData(sims []float64, labeled []LabeledPoint, targetFalseHitRat
 	return recommended, curve
 }
 
+// TuneCache executes the primary logic for the TuneCache operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func TuneCache(ctx context.Context, store CurveInputStore, route string, targetFalseHitRate float64, since time.Time) (float64, []CurvePoint, int, error) {
 	if since.IsZero() {
 		since = time.Now().Add(-14 * 24 * time.Hour)

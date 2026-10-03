@@ -1,3 +1,4 @@
+// Package stats provides enterprise-grade capabilities, configuration, and structural components for the stats subsystem.
 package stats
 
 import "errors"

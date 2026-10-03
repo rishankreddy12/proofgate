@@ -1,3 +1,4 @@
+// Package config provides enterprise-grade capabilities, configuration, and structural components for the config subsystem.
 package config
 
 import (
@@ -6,24 +7,37 @@ import (
 	"strings"
 )
 
+// Severity identifies the impact level of a configuration validation finding.
 type Severity string
 
 const (
-	SeverityError   Severity = "error"
+	// SeverityError defines a specific variation or structural setting for SeverityError.
+	SeverityError Severity = "error"
+	// SeverityWarning defines a specific variation or structural setting for SeverityWarning.
 	SeverityWarning Severity = "warning"
 )
 
+// LintIssue represents a discrete configuration defect, describing the violated
+// rule, its severity, and a human-readable remediation message.
 type LintIssue struct {
 	Rule     string   `json:"rule"`
 	Severity Severity `json:"severity"`
 	Message  string   `json:"message"`
 }
 
+// LintOpts configure the strictness of the policy linting engine.
 type LintOpts struct {
 	Strict bool // when true, treat warnings as errors
 }
 
 // Lint inspects a parsed Config and reports semantic, calibration, security, and coverage issues.
+//
+// Validation covers:
+// 1. Syntactic/Base constraints (c.validate)
+// 2. Cache calibration constraints (e.g. enabling cache without tuning)
+// 3. Pricing coverage constraints for budget tracking
+// 4. Admin exposure risks (e.g. unauthenticated non-loopback exposure)
+// 5. Insecure transport (HTTP over WAN)
 func Lint(c *Config, opts ...LintOpts) []LintIssue {
 	if c == nil {
 		return nil

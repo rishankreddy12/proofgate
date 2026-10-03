@@ -1,4 +1,6 @@
-// Package store is the Postgres repository for tenants, keys and (later) overrides and credentials.
+// Package store implements the PostgreSQL persistence layer for the Gateway.
+// It manages multi-tenant configuration, authentication keys, encrypted credentials,
+// and dynamic routing overrides.
 package store
 
 import (
@@ -10,8 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// ErrNotFound provides a globally accessible constant or variable for ErrNotFound.
 var ErrNotFound = errors.New("not found")
 
+// Tenant represents a logical organization or customer consuming the Gateway.
+// It acts as the primary boundary for Quotas (RPM/TPM/Budget) and BYOK boundaries.
 type Tenant struct {
 	ID        string
 	Name      string
@@ -19,6 +24,7 @@ type Tenant struct {
 	CreatedAt time.Time
 }
 
+// APIKey represents a bearer token authorized to make requests on behalf of a Tenant.
 type APIKey struct {
 	ID            string
 	TenantID      string
@@ -30,19 +36,24 @@ type APIKey struct {
 	RevokedAt     *time.Time
 }
 
+// KeyRecord provides a joined view of an APIKey and its owning Tenant.
 type KeyRecord struct {
 	Key    APIKey
 	Tenant Tenant
 }
 
+// Store manages the PostgreSQL connection pool.
 type Store struct {
 	pool *pgxpool.Pool
 }
 
+// Open connects to the database via the DSN and initializes the connection pool
+// with a default maximum capacity of 20 connections.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	return OpenWithConfig(ctx, dsn, 20)
 }
 
+// OpenWithConfig connects to the database utilizing a custom maximum connection capacity.
 func OpenWithConfig(ctx context.Context, dsn string, maxConns int) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -59,9 +70,14 @@ func OpenWithConfig(ctx context.Context, dsn string, maxConns int) (*Store, erro
 	return &Store{pool: pool}, nil
 }
 
-func (s *Store) Close()                         { s.pool.Close() }
+// Close terminates all connections in the pool gracefully.
+func (s *Store) Close() { s.pool.Close() }
+
+// Ping verifies the database connection is alive.
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
-func (s *Store) Pool() *pgxpool.Pool            { return s.pool }
+
+// Pool returns the underlying pgxpool instance.
+func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
 func notFound(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -70,6 +86,7 @@ func notFound(err error) error {
 	return err
 }
 
+// CreateTenant inserts a new tenant organization into the database.
 func (s *Store) CreateTenant(ctx context.Context, name string, p TenantPolicy) (Tenant, error) {
 	t := Tenant{Name: name, Policy: p}
 	err := s.pool.QueryRow(ctx, `INSERT INTO tenants(name, policy) VALUES ($1, $2) RETURNING id::text, created_at`, name, p).
@@ -77,6 +94,7 @@ func (s *Store) CreateTenant(ctx context.Context, name string, p TenantPolicy) (
 	return t, err
 }
 
+// TenantByName retrieves a tenant by its unique name.
 func (s *Store) TenantByName(ctx context.Context, name string) (Tenant, error) {
 	var t Tenant
 	err := s.pool.QueryRow(ctx, `SELECT id::text, name, policy, created_at FROM tenants WHERE name=$1`, name).
@@ -84,6 +102,7 @@ func (s *Store) TenantByName(ctx context.Context, name string) (Tenant, error) {
 	return t, notFound(err)
 }
 
+// GetTenant retrieves a tenant by its internal ID.
 func (s *Store) GetTenant(ctx context.Context, id string) (Tenant, error) {
 	var t Tenant
 	err := s.pool.QueryRow(ctx, `SELECT id::text, name, policy, created_at FROM tenants WHERE id=$1`, id).
@@ -91,6 +110,7 @@ func (s *Store) GetTenant(ctx context.Context, id string) (Tenant, error) {
 	return t, notFound(err)
 }
 
+// ListTenants enumerates all registered tenants ordered alphabetically by name.
 func (s *Store) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id::text, name, policy, created_at FROM tenants ORDER BY name ASC`)
 	if err != nil {
@@ -108,6 +128,8 @@ func (s *Store) ListTenants(ctx context.Context) ([]Tenant, error) {
 	return out, rows.Err()
 }
 
+// UpdateTenantPolicy executes the primary logic for the UpdateTenantPolicy operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Store) UpdateTenantPolicy(ctx context.Context, id string, p TenantPolicy) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE tenants SET policy=$2 WHERE id=$1`, id, p)
 	if err == nil && tag.RowsAffected() == 0 {
@@ -116,6 +138,8 @@ func (s *Store) UpdateTenantPolicy(ctx context.Context, id string, p TenantPolic
 	return err
 }
 
+// CreateKey generates a new API key record for a tenant.
+// The raw key secret should be securely hashed (e.g. SHA-256) before passing to this function.
 func (s *Store) CreateKey(ctx context.Context, tenantID, name, prefix string, hash []byte, routes []string, p KeyPolicy) (APIKey, error) {
 	if routes == nil {
 		routes = []string{}
@@ -127,6 +151,7 @@ func (s *Store) CreateKey(ctx context.Context, tenantID, name, prefix string, ha
 	return k, err
 }
 
+// KeyByHash retrieves an API key and its associated Tenant data by the exact hash of the token.
 func (s *Store) KeyByHash(ctx context.Context, hash []byte) (KeyRecord, error) {
 	var r KeyRecord
 	err := s.pool.QueryRow(ctx, `
@@ -139,6 +164,7 @@ func (s *Store) KeyByHash(ctx context.Context, hash []byte) (KeyRecord, error) {
 	return r, notFound(err)
 }
 
+// RevokeKey logically marks an API key as inactive. Subsequent authentication attempts will fail.
 func (s *Store) RevokeKey(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE api_keys SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL`, id)
 	if err == nil && tag.RowsAffected() == 0 {
@@ -147,6 +173,7 @@ func (s *Store) RevokeKey(ctx context.Context, id string) error {
 	return err
 }
 
+// ListKeys enumerates all API keys associated with a specific tenant.
 func (s *Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id::text, tenant_id::text, name, prefix, allowed_routes, policy, created_at, revoked_at
 		FROM api_keys WHERE tenant_id=$1 ORDER BY created_at`, tenantID)

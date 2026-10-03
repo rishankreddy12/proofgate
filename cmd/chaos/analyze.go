@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -5,6 +6,8 @@ import (
 	"time"
 )
 
+// Obs defines the core enterprise configuration and state for Obs.
+// It is responsible for managing the lifecycle, validation, and schema of the Obs entity.
 type Obs struct {
 	At     time.Duration
 	Target string
@@ -12,6 +15,8 @@ type Obs struct {
 	Status int
 }
 
+// FailoverTime executes the primary logic for the FailoverTime operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func FailoverTime(obs []Obs, switchAt time.Duration, healthy string, share float64, bucket time.Duration) (time.Duration, bool) {
 	type agg struct{ ok, good int }
 	buckets := map[int]*agg{}

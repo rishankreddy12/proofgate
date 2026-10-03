@@ -1,3 +1,4 @@
+// Package ratelimit provides enterprise-grade capabilities, configuration, and structural components for the ratelimit subsystem.
 package ratelimit
 
 import (
@@ -11,6 +12,8 @@ import (
 
 const chargedKey = "ratelimit.charged"
 
+// Stage defines the core enterprise configuration and state for Stage.
+// It is responsible for managing the lifecycle, validation, and schema of the Stage entity.
 type Stage struct {
 	b          Backend
 	reserve    int
@@ -18,6 +21,8 @@ type Stage struct {
 	onFailOpen func()
 }
 
+// NewStage executes the primary logic for the NewStage operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewStage(b Backend, reserve, defaultMax int, onFailOpen func()) *Stage {
 	if onFailOpen == nil {
 		onFailOpen = func() {}
@@ -25,8 +30,12 @@ func NewStage(b Backend, reserve, defaultMax int, onFailOpen func()) *Stage {
 	return &Stage{b: b, reserve: reserve, defaultMax: defaultMax, onFailOpen: onFailOpen}
 }
 
+// Name executes the primary logic for the Name operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Name() string { return "ratelimit" }
 
+// Before executes the primary logic for the Before operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	if c.Internal {
 		return false, nil

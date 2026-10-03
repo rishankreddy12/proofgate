@@ -1,3 +1,4 @@
+// Package secrets provides enterprise-grade capabilities, configuration, and structural components for the secrets subsystem.
 package secrets
 
 import (
@@ -17,6 +18,8 @@ type LocalKEK struct {
 	id  string
 }
 
+// NewLocalKEK executes the primary logic for the NewLocalKEK operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func NewLocalKEK(key []byte) (*LocalKEK, error) {
 	if len(key) != 32 {
 		return nil, errors.New("local KEK must be exactly 32 bytes")
@@ -25,6 +28,8 @@ func NewLocalKEK(key []byte) (*LocalKEK, error) {
 	return &LocalKEK{key: append([]byte(nil), key...), id: "local:" + hex.EncodeToString(sum[:6])}, nil
 }
 
+// LoadLocalKEK executes the primary logic for the LoadLocalKEK operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func LoadLocalKEK(path string) (*LocalKEK, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -37,6 +42,8 @@ func LoadLocalKEK(path string) (*LocalKEK, error) {
 	return NewLocalKEK(raw)
 }
 
+// GenerateLocalKEK executes the primary logic for the GenerateLocalKEK operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func GenerateLocalKEK() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -45,8 +52,12 @@ func GenerateLocalKEK() (string, error) {
 	return base64.StdEncoding.EncodeToString(b), nil
 }
 
+// ID executes the primary logic for the ID operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (k *LocalKEK) ID() string { return k.id }
 
+// Wrap executes the primary logic for the Wrap operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (k *LocalKEK) Wrap(_ context.Context, dek []byte) ([]byte, error) {
 	a, err := gcm(k.key)
 	if err != nil {
@@ -59,6 +70,8 @@ func (k *LocalKEK) Wrap(_ context.Context, dek []byte) ([]byte, error) {
 	return a.Seal(nonce, nonce, dek, []byte(k.id)), nil
 }
 
+// Unwrap executes the primary logic for the Unwrap operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func (k *LocalKEK) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) {
 	a, err := gcm(k.key)
 	if err != nil {

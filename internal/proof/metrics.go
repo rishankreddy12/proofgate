@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -7,7 +8,8 @@ import (
 )
 
 var (
-	metricsOnce   sync.Once
+	metricsOnce sync.Once
+	// RollbackTotal defines a specific variation or structural setting for RollbackTotal.
 	RollbackTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "proofgate_proof_rollback_total",

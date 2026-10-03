@@ -1,3 +1,4 @@
+// Package main provides enterprise-grade capabilities, configuration, and structural components for the main subsystem.
 package main
 
 import (
@@ -13,16 +14,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Profile defines the core enterprise configuration and state for Profile.
+// It is responsible for managing the lifecycle, validation, and schema of the Profile entity.
 type Profile struct {
 	Server   string `yaml:"server" json:"server"`
 	Insecure bool   `yaml:"insecure" json:"insecure"`
 }
 
+// ProfileConfig defines the core enterprise configuration and state for ProfileConfig.
+// It is responsible for managing the lifecycle, validation, and schema of the ProfileConfig entity.
 type ProfileConfig struct {
 	ActiveProfile string             `yaml:"active_profile" json:"active_profile"`
 	Profiles      map[string]Profile `yaml:"profiles" json:"profiles"`
 }
 
+// SessionFile defines the core enterprise configuration and state for SessionFile.
+// It is responsible for managing the lifecycle, validation, and schema of the SessionFile entity.
 type SessionFile struct {
 	Token     string    `json:"token"`
 	Username  string    `json:"username"`

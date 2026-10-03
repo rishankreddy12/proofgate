@@ -1,3 +1,4 @@
+// Package proof provides enterprise-grade capabilities, configuration, and structural components for the proof subsystem.
 package proof
 
 import (
@@ -10,14 +11,20 @@ import (
 	"github.com/proofgate/proofgate/internal/store"
 )
 
+// RoutingDeltasStore defines the core enterprise configuration and state for RoutingDeltasStore.
+// It is responsible for managing the lifecycle, validation, and schema of the RoutingDeltasStore entity.
 type RoutingDeltasStore interface {
 	RoutingDeltas(ctx context.Context, route string, since time.Time) ([]float64, error)
 }
 
+// OverrideWriter defines the core enterprise configuration and state for OverrideWriter.
+// It is responsible for managing the lifecycle, validation, and schema of the OverrideWriter entity.
 type OverrideWriter interface {
 	SetOverride(ctx context.Context, o store.Override) error
 }
 
+// MonitorResult defines the core enterprise configuration and state for MonitorResult.
+// It is responsible for managing the lifecycle, validation, and schema of the MonitorResult entity.
 type MonitorResult struct {
 	MeanDelta      float64
 	CILow          float64
@@ -27,6 +34,8 @@ type MonitorResult struct {
 	Message        string
 }
 
+// MonitorQuality executes the primary logic for the MonitorQuality operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func MonitorQuality(
 	ctx context.Context,
 	deltasStore RoutingDeltasStore,

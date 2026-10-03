@@ -1,0 +1,111 @@
+groups:
+  - name: proofgate.failsafe
+    interval: 30s
+    rules:
+      - alert: RateLimitFailOpen
+        expr: rate(proofgate_ratelimit_fail_open_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ProofGate rate limiter is failing open"
+          description: >-
+            Redis is unavailable and rate limiting is bypassed for non-Strict
+            tenants. Requests are being allowed without quota enforcement.
+            Value: {{ $value | humanize }}/s over the last 5 minutes.
+
+      - alert: BudgetFailOpen
+        expr: rate(proofgate_budget_fail_open_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ProofGate budget enforcement is failing open"
+          description: >-
+            Budget enforcement is bypassed due to backend unavailability.
+            Spend is not being tracked. Value: {{ $value | humanize }}/s.
+
+      - alert: HighUnpricedCallRate
+        expr: rate(proofgate_unpriced_calls_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unpriced API calls detected"
+          description: >-
+            Calls to provider={{ $labels.provider }} model={{ $labels.model }}
+            have no pricing configured. Budget accounting is incomplete.
+
+      - alert: HedgeWasteHigh
+        expr: >-
+          rate(proofgate_hedge_wasted_tokens_total[5m]) /
+          (rate(proofgate_tokens_total{kind="completion"}[5m]) + 1) > 0.15
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Hedge wasted token ratio is high"
+          description: >-
+            More than 15% of completion tokens on route={{ $labels.route }}
+            are wasted by cancelled hedge requests.
+
+      - alert: AdminAuditWriteFailures
+        expr: rate(proofgate_admin_audit_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Admin audit log writes are failing"
+          description: >-
+            Privileged admin operations may not be audited. Investigate
+            the audit backend (Postgres) immediately.
+
+      - alert: SpoofedInternalHeader
+        expr: rate(proofgate_spoofed_internal_header_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Spoofed X-ProofGate-Internal headers detected"
+          description: >-
+            External requests are sending the internal trust-boundary header.
+            Tenant={{ $labels.tenant }}. This may indicate an attack or
+            misconfigured upstream proxy.
+
+  - name: proofgate.availability
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: >-
+          rate(proofgate_requests_total{status!="ok",status!="client_closed"}[5m]) /
+          rate(proofgate_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ProofGate error rate above 5%"
+          description: >-
+            Route={{ $labels.route }} target={{ $labels.target }} has an
+            error rate of {{ $value | humanizePercentage }}.
+
+      - alert: HighP99Latency
+        expr: >-
+          histogram_quantile(0.99, rate(proofgate_request_duration_seconds_bucket[5m])) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ProofGate P99 latency above 30s"
+          description: >-
+            Route={{ $labels.route }} P99 latency is {{ $value | humanizeDuration }}.
+
+      - alert: CircuitBreakerOpen
+        expr: proofgate_breaker_open == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker open for target"
+          description: >-
+            Target={{ $labels.target }} circuit breaker is open.
+            Requests are being rejected.

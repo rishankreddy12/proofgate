@@ -1,3 +1,4 @@
+// Package adminauth provides enterprise-grade capabilities, configuration, and structural components for the adminauth subsystem.
 package adminauth
 
 import (
@@ -7,6 +8,8 @@ import (
 	"strings"
 )
 
+// ErrorResponse defines the core enterprise configuration and state for ErrorResponse.
+// It is responsible for managing the lifecycle, validation, and schema of the ErrorResponse entity.
 type ErrorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`

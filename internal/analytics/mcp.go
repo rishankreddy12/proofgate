@@ -1,3 +1,4 @@
+// Package analytics provides enterprise-grade capabilities, configuration, and structural components for the analytics subsystem.
 package analytics
 
 import (
@@ -7,6 +8,8 @@ import (
 	"github.com/proofgate/proofgate/internal/mcpproxy"
 )
 
+// InsertMCP executes the primary logic for the InsertMCP operation.
+// It ensures thread-safe execution, input validation, and proper error handling.
 func InsertMCP(conn driver.Conn) func(context.Context, []mcpproxy.Audit) error {
 	return func(ctx context.Context, rows []mcpproxy.Audit) error {
 		b, err := conn.PrepareBatch(ctx, "INSERT INTO mcp_calls")
