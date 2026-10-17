@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,6 +32,7 @@ import (
 	"github.com/proofgate/proofgate/internal/control"
 	"github.com/proofgate/proofgate/internal/health"
 	"github.com/proofgate/proofgate/internal/mcpproxy"
+	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/proof"
 	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/proofgate/proofgate/internal/ratelimit"
@@ -198,7 +200,6 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	tracker.SetTargets(rt.Router.Targets())
 	rt.Router.SetHealth(tracker.Degraded)
 	state := &server.State{}
-	state.Store(rt)
 
 	limiter := ratelimit.NewRedis(rdb)
 	ledger := budget.NewRedisLedger(rdb)
@@ -207,6 +208,9 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	semantic := cache.NewSemantic(rdb)
 
 	var h *server.Handlers
+	var routingShadowWorker *proof.RoutingShadowWorker
+	var cacheLabelWorker *proof.CacheLabelWorker
+	judgeTarget := ""
 	embedFunc := cache.EmbedFunc(func(ctx context.Context, route, tenant, text string) ([]float32, error) {
 		if h == nil {
 			return nil, errors.New("handlers not initialized")
@@ -239,24 +243,68 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		func() { cacheDropped.WithLabelValues().Inc() },
 	)
 
+	// Attach proof recording to the production ClickHouse connection. Both
+	// recorders are bounded and non-blocking on the request path.
+	chClient := proof.NewCHWithStoreText(chConn, cfg.Analytics.StoreText)
+	proofDropped := metrics.Counter("proofgate_proof_dropped_total", "Proof rows dropped because a queue was full.", "queue")
+	shadowRecorder := proof.NewShadowRecorder(chClient, 50_000, 5_000, time.Second,
+		func() { proofDropped.WithLabelValues("cache_shadow").Inc() },
+		func(err error) { slog.Warn("cache shadow flush failed", "err", err) })
+	// The config flag is an explicit deployment opt-in. Until it is enabled,
+	// shadow evidence may only be collected for tenants that explicitly opted in.
+	cacheStage.SetShadowConsentRequired(!cfg.Proof.ShadowConsent)
+	cacheStage.SetOnShadow(shadowRecorder.CacheHook())
+	decisionBatch := analytics.NewBatcher("routing_decisions", 50_000, 5_000, time.Second,
+		chClient.InsertDecisions,
+		func() { proofDropped.WithLabelValues("routing_decisions").Inc() })
+
 	runs := agentrun.NewRedisStore(rdb)
 	fuzzyDetector := agentrun.NewFuzzyDetector(embedFunc, agentrun.NewRedisFuzzyStore(rdb))
 
-	pipe := app.BuildPipeline(app.Deps{
-		Metrics:           metrics,
-		UsageEmit:         usage.Emit,
-		Runs:              runs,
-		FuzzyDetector:     fuzzyDetector,
-		DefaultMaxToks:    cfg.Defaults.DefaultMaxTokens,
-		CacheStage:        cacheStage,
-		Limiter:           limiter,
-		MaxTokReserve:     cfg.Defaults.MaxTokensReserve,
-		FailOpenInc:       metrics.FailOpen.Inc,
-		Ledger:            ledger,
-		Pricing:           rt.Pricing,
-		BudgetCfg:         cfg.Budget,
-		BudgetFailOpenInc: metrics.BudgetFailOpen.Inc,
-	})
+	buildPipeline := func(runtime *server.Runtime, pipelineCfg *config.Config) *pipeline.Pipeline {
+		return app.BuildPipeline(app.Deps{
+			Metrics:           metrics,
+			UsageEmit:         usage.Emit,
+			Runs:              runs,
+			FuzzyDetector:     fuzzyDetector,
+			DefaultMaxToks:    pipelineCfg.Defaults.DefaultMaxTokens,
+			CacheStage:        cacheStage,
+			Limiter:           limiter,
+			MaxTokReserve:     pipelineCfg.Defaults.MaxTokensReserve,
+			FailOpenInc:       metrics.FailOpen.Inc,
+			Ledger:            ledger,
+			Pricing:           runtime.Pricing,
+			BudgetCfg:         pipelineCfg.Budget,
+			BudgetFailOpenInc: metrics.BudgetFailOpen.Inc,
+			DecisionEmit:      decisionBatch.Emit,
+			RoutingShadow: func(ctx context.Context, task proof.RoutingShadowTask, req *api.ChatRequest) {
+				if routingShadowWorker == nil || h == nil || judgeTarget == "" {
+					return
+				}
+				go func() {
+					counterfactual := task.StrongTarget
+					if task.Decision != "cheap" {
+						counterfactual = task.CheapTarget
+					}
+					resp, err := h.ChatInternal(ctx, counterfactual, req.Clone())
+					if err != nil || resp == nil || len(resp.Choices) == 0 {
+						return
+					}
+					answer := resp.Choices[0].Message.Content.PlainText()
+					if task.Decision == "cheap" {
+						task.StrongAnswer = answer
+					} else {
+						task.CheapAnswer = answer
+					}
+					task.JudgeModel = judgeTarget
+					_, _ = routingShadowWorker.EvaluateAndRecord(context.WithoutCancel(ctx), task)
+				}()
+			},
+		})
+	}
+	pipe := buildPipeline(rt, cfg)
+	rt.Pipeline = pipe
+	state.Store(rt)
 	h = &server.Handlers{State: state, Breakers: breakers, Pipeline: pipe, Limiter: limiter, Ledger: ledger, Now: time.Now, Health: tracker, Metrics: metrics,
 		MaxRequestBodyBytes: cfg.Server.MaxRequestBodyBytes,
 		OnEmbed: func(ev server.EmbedEvent) {
@@ -274,11 +322,26 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		Audit:               mcpAudit.Emit,
 		MaxRequestBodyBytes: cfg.MCP.MaxRequestBodyBytes,
 		RequestTimeout:      cfg.MCP.RequestTimeout,
+		MaxRequestBodyBytesFunc: func() int64 {
+			if rt := state.Load(); rt != nil && rt.Config != nil {
+				return rt.Config.MCP.MaxRequestBodyBytes
+			}
+			return 0
+		},
+		RequestTimeoutFunc: func() time.Duration {
+			if rt := state.Load(); rt != nil && rt.Config != nil {
+				return rt.Config.MCP.RequestTimeout
+			}
+			return 0
+		},
 	})
 
 	authMW := auth.NewMiddlewareWithConfig(st, cfg.Auth.CacheTTL, cfg.Auth.NegativeCacheTTL, cfg.Auth.MaxCachedKeys)
 	authMW.ClientIPFunc = func(r *http.Request) string {
-		trusted, _ := cfg.Server.ParsedTrustedProxies()
+		var trusted []*net.IPNet
+		if active := state.Load(); active != nil && active.Config != nil {
+			trusted, _ = active.Config.Server.ParsedTrustedProxies()
+		}
 		return server.ClientIP(r, trusted)
 	}
 
@@ -299,6 +362,11 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		if err != nil {
 			slog.Error("runtime rebuild failed; keeping previous", "err", err)
 			return
+		}
+		next.Pipeline = buildPipeline(next, merged)
+		cacheStage.SetShadowConsentRequired(!merged.Proof.ShadowConsent)
+		if cacheLabelWorker != nil {
+			cacheLabelWorker.SetRoutes(cacheLabelRoutes(merged))
 		}
 		next.Router.SetHealth(tracker.Degraded)
 		tracker.SetTargets(next.Router.Targets())
@@ -360,6 +428,9 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	case "gossip":
 		if cfg.Health.GossipAddr != "" {
 			gossip := health.NewGossipWithSecret(cfg.Health.GossipAddr, cfg.Health.GossipPeers, tracker, cfg.Health.ProbeInterval, cfg.Health.GossipSecret)
+			if cfg.Health.AllowUnsignedGossip {
+				gossip.SetAllowUnsigned(true)
+			}
 			if err := gossip.Start(); err == nil {
 				defer gossip.Stop()
 			}
@@ -367,8 +438,23 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	}
 	leader := proof.NewLeader(rdb, instanceID, "proofgate:leader:monitor", 30*time.Second, 10*time.Second)
 	leader.Start(ctx)
+	judgeTarget = chooseJudgeTarget(cfg)
+	if judgeTarget != "" {
+		judge := proof.NewJudge(proof.ChatCallerFunc(h.ChatInternal), judgeTarget)
+		judge.SetAllowedProviders(cfg.Proof.AllowedJudgeProviders)
+		shadowSpend := proof.NewShadowSpendGuard(rdb, 0)
+		routingShadowWorker = proof.NewRoutingShadowWorker(chClient, judge, leader, shadowSpend)
 
-	chClient := proof.NewCHWithStoreText(chConn, cfg.Analytics.StoreText)
+		cacheRoutes := cacheLabelRoutes(cfg)
+		if len(cacheRoutes) > 0 {
+			cacheLabelWorker = proof.NewCacheLabelWorker(leader, shadowSpend, chClient, judge,
+				cacheRoutes, judgeTarget, cfg.Proof.MonitorInterval)
+			cacheLabelWorker.Start(ctx)
+		}
+	} else {
+		slog.Warn("proof judge disabled: no eligible judge target configured")
+	}
+
 	go proof.RunMonitor(ctx, leader, cfg.Proof.MonitorInterval, func(runCtx context.Context) error {
 		rt := state.Load()
 		if rt != nil && rt.Config != nil {
@@ -378,6 +464,13 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	})
 
 	ctrlBus := control.NewBus(rdb, instanceID, control.DefaultChannel)
+	// API-key and provider-credential caches are process-local. Subscribe every
+	// replica before starting the control-bus consumer so revocations and
+	// rotations cannot leave a stale positive/secret cache behind.
+	authMW.SubscribeControl(ctrlBus)
+	if keyCache != nil {
+		keyCache.SubscribeControl(ctrlBus)
+	}
 	ctrlBus.Subscribe(control.OpPurgeSecrets, func(c context.Context, msg control.Message) error {
 		if msg.Sender == instanceID {
 			return nil
@@ -401,12 +494,6 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 			return nil
 		}
 		return watcher.Reload()
-	})
-	ctrlBus.Subscribe(control.OpKeyRevoked, func(c context.Context, msg control.Message) error {
-		if h, ok := msg.Args["key_hash"]; ok && h != "" {
-			authMW.EvictKey(h)
-		}
-		return nil
 	})
 	go func() {
 		if err := ctrlBus.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
@@ -438,19 +525,18 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	// 1. Metrics listener: isolated to metrics and healthz checks
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("GET /metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
-	healthzHandler := func(w http.ResponseWriter, r *http.Request) {
-		if err := st.Ping(r.Context()); err != nil {
-			http.Error(w, "postgres: "+err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		if err := rdb.Ping(r.Context()).Err(); err != nil {
-			http.Error(w, "redis: "+err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}
-	metricsMux.HandleFunc("GET /healthz", healthzHandler)
-	metricsMux.HandleFunc("GET /readyz", healthzHandler)
+	metricsMux.HandleFunc("GET /healthz", server.LivenessHandler)
+	metricsMux.HandleFunc("GET /readyz", h.Readiness(
+		server.ReadinessDependency{Name: "postgres", Check: func(ctx context.Context) error {
+			return st.Ping(ctx)
+		}},
+		server.ReadinessDependency{Name: "redis", Check: func(ctx context.Context) error {
+			return rdb.Ping(ctx).Err()
+		}},
+		server.ReadinessDependency{Name: "clickhouse", Check: func(ctx context.Context) error {
+			return chConn.Ping(ctx)
+		}},
+	))
 
 	metricsSrv := &http.Server{
 		Addr:              cfg.Server.MetricsAddr,
@@ -462,25 +548,28 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 
 	// 2. Admin listener: operational and control-plane endpoints
 	admin := http.NewServeMux()
-	admin.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if err := st.Ping(r.Context()); err != nil {
-			http.Error(w, "postgres: "+err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		if err := rdb.Ping(r.Context()).Err(); err != nil {
-			http.Error(w, "redis: "+err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	admin.Handle("GET /healthz", http.HandlerFunc(server.LivenessHandler))
+	admin.Handle("GET /readyz", h.Readiness(
+		server.ReadinessDependency{Name: "postgres", Check: func(ctx context.Context) error {
+			return st.Ping(ctx)
+		}},
+		server.ReadinessDependency{Name: "redis", Check: func(ctx context.Context) error {
+			return rdb.Ping(ctx).Err()
+		}},
+		server.ReadinessDependency{Name: "clickhouse", Check: func(ctx context.Context) error {
+			return chConn.Ping(ctx)
+		}},
+	))
 
 	cpDeps := &server.ControlPlaneDeps{
-		State:       state,
-		Store:       st,
-		Redis:       rdb,
-		AuthService: adminAuthSvc,
-		ReloadFunc:  watcher.Reload,
-		PurgeCache:  server.AdminCachePurgeHandler(rdb),
+		State:          state,
+		Store:          st,
+		Redis:          rdb,
+		AuthService:    adminAuthSvc,
+		AuthMiddleware: authMW,
+		TenantEraser:   store.NewTenantEraser(st, rdb, analytics.NewTenantPurger(chConn)),
+		ReloadFunc:     watcher.Reload,
+		PurgeCache:     server.AdminCachePurgeHandler(rdb),
 		PurgeSecrets: func() {
 			if keyCache != nil {
 				keyCache.Purge()
@@ -496,7 +585,8 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		StartTime:   startTime,
 		AdminAddr:   cfg.Server.AdminAddr,
 		ServerAddr:  cfg.Server.Addr,
-		Config:      cfg,
+		// Config is intentionally left nil. Handlers resolve trusted proxies and
+		// admin-chat policy from the atomically reloaded State snapshot.
 		Metrics:     metrics,
 		EnablePprof: cfg.Server.EnablePprof,
 	}
@@ -548,6 +638,9 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		slog.Warn("drain timed out", "err", err)
 	}
 	cacheStage.Wait()
+	if cacheLabelWorker != nil {
+		cacheLabelWorker.Stop()
+	}
 
 	// Create a fresh context for final flush because the drain context might already be expired
 	fctx, fcancel := context.WithTimeout(context.Background(), cfg.Analytics.FlushTimeout)
@@ -558,5 +651,55 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 	if err := mcpAudit.Close(fctx); err != nil {
 		slog.Warn("mcp analytics close failed", "err", err)
 	}
+	shadowRecorder.Close()
+	if err := decisionBatch.Close(fctx); err != nil {
+		slog.Warn("routing decision proof close failed", "err", err)
+	}
 	return shutdownTracing(fctx)
+}
+
+func chooseJudgeTarget(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	allowed := func(provider string) bool {
+		if len(cfg.Proof.AllowedJudgeProviders) == 0 {
+			return true
+		}
+		for _, candidate := range cfg.Proof.AllowedJudgeProviders {
+			if strings.EqualFold(candidate, provider) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, route := range cfg.Routes {
+		if route.Embeddings {
+			continue
+		}
+		candidates := []string{route.SmartRoute.StrongTarget}
+		for _, target := range route.Targets {
+			candidates = append(candidates, target.Provider+"/"+target.Model)
+		}
+		for _, candidate := range candidates {
+			target, ok := router.ParseTarget(candidate)
+			if ok && allowed(target.Provider) {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+func cacheLabelRoutes(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	var routes []string
+	for _, route := range cfg.Routes {
+		if route.Cache.Mode == "shadow" || route.Cache.Mode == "on" {
+			routes = append(routes, route.Name)
+		}
+	}
+	return routes
 }

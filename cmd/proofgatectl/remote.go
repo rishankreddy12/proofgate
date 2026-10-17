@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -278,6 +279,62 @@ func runCachePurge(ctx context.Context, gf globalFlags, args []string) {
 		return
 	}
 	fmt.Println("Cache purge executed.")
+}
+
+func runKeyRevokeRemote(ctx context.Context, gf globalFlags, args []string) {
+	fs := flag.NewFlagSet("key revoke", flag.ExitOnError)
+	id := fs.String("id", "", "API key ID")
+	_ = fs.Parse(args)
+	if *id == "" {
+		die("--id is required")
+	}
+
+	client, err := NewClient(gf.profile, gf.server, gf.insecure, gf.output == "json")
+	if err != nil {
+		die("client: %v", err)
+	}
+	var resp map[string]any
+	_, err = client.Do(ctx, http.MethodPost, "/admin/cp/keys/"+url.PathEscape(*id)+"/revoke", nil, &resp)
+	if err != nil {
+		die("%v", err)
+	}
+	if client.OutputJSON {
+		printOutput(client, resp)
+		return
+	}
+	fmt.Printf("API key %q revoked and cluster invalidation published.\n", *id)
+}
+
+func runTenantPurgeRemote(ctx context.Context, gf globalFlags, args []string) {
+	fs := flag.NewFlagSet("tenant purge-data", flag.ExitOnError)
+	name := fs.String("name", "", "tenant ID")
+	_ = fs.Parse(args)
+	tenantID := strings.TrimSpace(*name)
+	if tenantID == "" && len(fs.Args()) > 0 {
+		tenantID = strings.TrimSpace(fs.Args()[0])
+	}
+	if tenantID == "" {
+		die("usage: proofgatectl tenant purge-data <tenant_id>")
+	}
+
+	client, err := NewClient(gf.profile, gf.server, gf.insecure, gf.output == "json")
+	if err != nil {
+		die("client: %v", err)
+	}
+	var resp map[string]any
+	status, err := client.Do(ctx, http.MethodPost, "/admin/cp/tenants/"+url.PathEscape(tenantID)+"/erase", nil, &resp)
+	if err != nil {
+		die("%v", err)
+	}
+	if client.OutputJSON {
+		printOutput(client, resp)
+	} else {
+		b, _ := json.MarshalIndent(resp, "", "  ")
+		fmt.Println(string(b))
+	}
+	if status == http.StatusMultiStatus || strings.EqualFold(fmt.Sprint(resp["status"]), "partial") {
+		die("tenant purge completed partially")
+	}
 }
 
 func runUser(ctx context.Context, gf globalFlags, args []string) {
@@ -832,7 +889,15 @@ func runChat(ctx context.Context, gf globalFlags, args []string) {
 					die("chat request failed: %v", err)
 				}
 				defer res.Body.Close()
-				_ = json.NewDecoder(res.Body).Decode(&resp)
+				if err := checkDataPlaneResponse(res); err != nil {
+					die("chat request failed: %v", err)
+				}
+				if err := checkDataPlaneContentType(res, "application/json"); err != nil {
+					die("chat request failed: %v", err)
+				}
+				if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+					die("decode chat response: %v", err)
+				}
 			} else {
 				_, err := client.Do(ctx, "POST", "/admin/cp/chat", reqBody, &resp)
 				if err != nil {
@@ -870,6 +935,12 @@ func runChat(ctx context.Context, gf globalFlags, args []string) {
 					die("stream error: %v", err)
 				}
 			}
+			if err := checkDataPlaneResponse(res); err != nil {
+				die("stream request failed: %v", err)
+			}
+			if err := checkDataPlaneContentType(res, "text/event-stream"); err != nil {
+				die("stream request failed: %v", err)
+			}
 			defer res.Body.Close()
 
 			reader := bufio.NewReader(res.Body)
@@ -894,7 +965,10 @@ func runChat(ctx context.Context, gf globalFlags, args []string) {
 						} `json:"delta"`
 					} `json:"choices"`
 				}
-				if json.Unmarshal([]byte(data), &chunk) == nil && len(chunk.Choices) > 0 {
+				if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+					die("decode stream chunk: %v", err)
+				}
+				if len(chunk.Choices) > 0 {
 					chunkText := chunk.Choices[0].Delta.Content
 					sb.WriteString(chunkText)
 					fmt.Print(chunkText)
@@ -950,6 +1024,50 @@ func runChat(ctx context.Context, gf globalFlags, args []string) {
 		executeChat(input)
 		fmt.Println()
 	}
+}
+
+// checkDataPlaneResponse consumes an error response before callers attempt to
+// decode it as an OpenAI JSON document or an SSE stream. Direct data-plane
+// calls intentionally do not use the admin Client.Do path, so they need this
+// check at the point where the response is received.
+func checkDataPlaneResponse(resp *http.Response) error {
+	if resp == nil {
+		return fmt.Errorf("data-plane request returned no response")
+	}
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		return nil
+	}
+
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10)); err != nil {
+		return fmt.Errorf("data-plane request failed with HTTP %d: read error: %w", resp.StatusCode, err)
+	}
+
+	message := http.StatusText(resp.StatusCode)
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		message = "authentication failed; check the data-plane API key"
+	case http.StatusForbidden:
+		message = "permission denied"
+	case http.StatusTooManyRequests:
+		message = "rate limited"
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		message = "gateway or upstream failure"
+	case http.StatusInternalServerError:
+		message = "gateway failure"
+	}
+	return fmt.Errorf("data-plane request failed with HTTP %d: %s", resp.StatusCode, message)
+}
+
+func checkDataPlaneContentType(resp *http.Response, expected string) error {
+	if resp == nil {
+		return fmt.Errorf("data-plane request returned no response")
+	}
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	if contentType == "" || strings.Contains(contentType, expected) {
+		return nil
+	}
+	return fmt.Errorf("data-plane request returned unexpected content type %q (want %s)", contentType, expected)
 }
 
 func runAdmin(ctx context.Context, gf globalFlags, args []string) {

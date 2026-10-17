@@ -28,5 +28,5 @@ Welcome to the comprehensive documentation for **ProofGate** — the enterprise 
 ## Deployment & Production Operations
 
 - **[Production Helm Chart](../deploy/helm/proofgate/README.md)**: Hardened Kubernetes deployment with Pod Security Standards, NetworkPolicy, and Vault Transit integration.
-- **[Docker Compose Quickstart](../deploy/docker-compose.yml)**: Local full-stack environment with PostgreSQL, Redis, ClickHouse, Prometheus, and Grafana.
+- **[Docker Compose Quickstart](../deploy/docker-compose.yml)**: Local full-stack environment with PostgreSQL, Redis, ClickHouse, Prometheus, and Grafana. Gateway-1 uses data-plane host port `18080` and authenticated admin host port `19090` (gateway-2/3 use `18085`/`19091` and `18084`/`19092`).
 - **[Security Policy & Vulnerability Reporting](../SECURITY.md)**: Vulnerability disclosure guidelines, supply-chain verification, and Cosign release signatures.

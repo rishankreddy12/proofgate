@@ -309,16 +309,17 @@ type SLO struct {
 // HealthConfig defines the core enterprise configuration and state for HealthConfig.
 // It is responsible for managing the lifecycle, validation, and schema of the HealthConfig entity.
 type HealthConfig struct {
-	Alpha         float64       `yaml:"alpha"`
-	Breaches      int           `yaml:"breaches"`
-	Recover       time.Duration `yaml:"recover"`
-	MinSamples    int           `yaml:"min_samples"`
-	ProbeInterval time.Duration `yaml:"probe_interval"`
-	ProbeTimeout  time.Duration `yaml:"probe_timeout"`
-	GossipAddr    string        `yaml:"gossip_addr"`
-	GossipPeers   []string      `yaml:"gossip_peers"`
-	ShareMode     string        `yaml:"share_mode"`
-	GossipSecret  string        `yaml:"gossip_secret"`
+	Alpha               float64       `yaml:"alpha"`
+	Breaches            int           `yaml:"breaches"`
+	Recover             time.Duration `yaml:"recover"`
+	MinSamples          int           `yaml:"min_samples"`
+	ProbeInterval       time.Duration `yaml:"probe_interval"`
+	ProbeTimeout        time.Duration `yaml:"probe_timeout"`
+	GossipAddr          string        `yaml:"gossip_addr"`
+	GossipPeers         []string      `yaml:"gossip_peers"`
+	ShareMode           string        `yaml:"share_mode"`
+	GossipSecret        string        `yaml:"gossip_secret"`
+	AllowUnsignedGossip bool          `yaml:"gossip_allow_unsigned"`
 }
 
 // CapabilityConfig defines the core enterprise configuration and state for CapabilityConfig.
@@ -479,6 +480,9 @@ func (c *Config) applyEnvOverrides() {
 	}
 	if env := os.Getenv("PROOFGATE_HEALTH_SHARE_MODE"); env != "" {
 		c.Health.ShareMode = env
+	}
+	if env := os.Getenv("PROOFGATE_GOSSIP_ALLOW_UNSIGNED"); env == "1" || strings.EqualFold(env, "true") {
+		c.Health.AllowUnsignedGossip = true
 	}
 }
 
@@ -790,6 +794,11 @@ func (c *Config) validate() error {
 	if c.Health.ProbeTimeout < 0 {
 		errs = append(errs, errors.New("health.probe_timeout must be >= 0"))
 	}
+	if strings.EqualFold(c.Health.ShareMode, "gossip") && c.Health.GossipSecret == "" {
+		if !c.Health.AllowUnsignedGossip {
+			errs = append(errs, errors.New("gossip_secret is required when share_mode=gossip (set gossip_allow_unsigned=true to override)"))
+		}
+	}
 	if c.AdminAuth.SessionIdleTimeout < time.Minute {
 		errs = append(errs, errors.New("admin_auth.session_idle_timeout minimum is 1m"))
 	}
@@ -835,6 +844,9 @@ func (c *Config) validate() error {
 					errs = append(errs, fmt.Errorf("provider %q: base_url %q must have http or https scheme", p.Name, p.BaseURL))
 				} else if u.Scheme == "http" && !isLoopback && !p.AllowInsecureBaseURL {
 					errs = append(errs, fmt.Errorf("provider %q: base_url %q must use https unless loopback or allow_insecure_base_url is true", p.Name, p.BaseURL))
+				}
+				if !isLoopback && p.APIKeyEnv == "" && !p.APIKeyDB {
+					errs = append(errs, fmt.Errorf("provider %q: external providers require api_key_env or api_key_db", p.Name))
 				}
 			}
 		}

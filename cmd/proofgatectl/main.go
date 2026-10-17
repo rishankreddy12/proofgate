@@ -20,13 +20,44 @@ import (
 	"github.com/proofgate/proofgate/internal/analytics"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/config"
+	"github.com/proofgate/proofgate/internal/control"
 	"github.com/proofgate/proofgate/internal/secrets"
 	"github.com/proofgate/proofgate/internal/store"
+	"github.com/redis/go-redis/v9"
 )
 
 func die(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", a...)
 	os.Exit(1)
+}
+
+func openControlBus(ctx context.Context, cfg *config.Config) (*redis.Client, *control.Bus, error) {
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" && cfg != nil {
+		redisURL = cfg.Redis.URL
+	}
+	if redisURL == "" {
+		return nil, nil, fmt.Errorf("REDIS_URL is required (or redis.url configured in proofgate.yaml) for cluster invalidation")
+	}
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse redis URL: %w", err)
+	}
+	opt.Protocol = 2
+	rdb := redis.NewClient(opt)
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		_ = rdb.Close()
+		return nil, nil, fmt.Errorf("connect redis: %w", err)
+	}
+	return rdb, control.NewBus(rdb, "proofgatectl", control.DefaultChannel), nil
+}
+
+func remoteAdminCommand(gf globalFlags, args []string) bool {
+	if gf.server != "" || gf.profile != "" || len(args) < 2 {
+		return gf.server != "" || gf.profile != ""
+	}
+	cfg, err := loadProfileConfig()
+	return err == nil && cfg.ActiveProfile != ""
 }
 
 func main() {
@@ -36,6 +67,16 @@ func main() {
 	}
 
 	ctx := context.Background()
+	if remoteAdminCommand(gf, cmdArgs) {
+		switch {
+		case len(cmdArgs) >= 2 && cmdArgs[0] == "key" && cmdArgs[1] == "revoke":
+			runKeyRevokeRemote(ctx, gf, cmdArgs[2:])
+			return
+		case len(cmdArgs) >= 2 && cmdArgs[0] == "tenant" && cmdArgs[1] == "purge-data":
+			runTenantPurgeRemote(ctx, gf, cmdArgs[2:])
+			return
+		}
+	}
 
 	// 1. Standalone/remote commands that do not need direct DB connection
 	switch cmdArgs[0] {
@@ -111,6 +152,7 @@ func main() {
 		return
 	}
 
+	var loadedCfg *config.Config
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		cfgPath := os.Getenv("PROOFGATE_CONFIG")
@@ -122,10 +164,15 @@ func main() {
 			}
 		}
 		if cfgPath != "" {
-			if cfg, err := config.Load(cfgPath); err == nil && cfg.Database.URL != "" {
-				dsn = cfg.Database.URL
+			if cfg, err := config.Load(cfgPath); err == nil {
+				loadedCfg = cfg
+				if cfg.Database.URL != "" {
+					dsn = cfg.Database.URL
+				}
 			}
 		}
+	} else if cfgPath := os.Getenv("PROOFGATE_CONFIG"); cfgPath != "" {
+		loadedCfg, _ = config.Load(cfgPath)
 	}
 	if dsn == "" {
 		die("DATABASE_URL is required (or database.url configured in proofgate.yaml)")
@@ -247,18 +294,32 @@ func main() {
 			targetID = t.ID
 		}
 		chDSN := os.Getenv("CLICKHOUSE_DSN")
+		if chDSN == "" && loadedCfg != nil {
+			chDSN = loadedCfg.Analytics.ClickHouseDSN
+		}
 		if chDSN == "" {
-			die("CLICKHOUSE_DSN not set")
+			die("CLICKHOUSE_DSN is required (or analytics.clickhouse_dsn configured in proofgate.yaml)")
 		}
 		chConn, err := analytics.Open(ctx, chDSN)
 		if err != nil {
 			die("open clickhouse: %v", err)
 		}
 		defer chConn.Close()
-		if err := analytics.PurgeTenantData(ctx, chConn, targetID); err != nil {
-			die("purge tenant data: %v", err)
+		rdb, bus, err := openControlBus(ctx, loadedCfg)
+		if err != nil {
+			die("open control bus: %v", err)
 		}
-		fmt.Printf("purged analytics data for tenant %s\n", targetID)
+		defer rdb.Close()
+		receipt := store.NewTenantEraser(st, rdb, analytics.NewTenantPurger(chConn)).Erase(ctx, targetID)
+		if err := bus.Publish(ctx, control.OpTenantErased, control.TenantErasedArgs(targetID, receipt.ID)); err != nil {
+			receipt.Status = "partial"
+			receipt.Components["control_bus"] = store.TenantEraseComponent{Status: "failed", Error: "tenant cache invalidation could not be published"}
+		}
+		b, _ := json.MarshalIndent(receipt, "", "  ")
+		fmt.Println(string(b))
+		if receipt.Status == "partial" {
+			die("tenant purge completed partially")
+		}
 	case "key create":
 		t, err := st.TenantByName(ctx, *tenant)
 		if err != nil {
@@ -315,10 +376,20 @@ func main() {
 			fmt.Printf("%s\t%s\t%s…\t%s\t%v\n", k.ID, k.Name, k.Prefix, status, k.AllowedRoutes)
 		}
 	case "key revoke":
-		if err := st.RevokeKey(ctx, *id); err != nil {
+		if *id == "" {
+			die("--id is required")
+		}
+		rdb, bus, err := openControlBus(ctx, loadedCfg)
+		if err != nil {
+			die("open control bus: %v", err)
+		}
+		defer rdb.Close()
+		if err := st.RevokeKeyAndPublish(ctx, *id, func(ctx context.Context, hash []byte) error {
+			return control.PublishKeyRevoked(ctx, bus, hash)
+		}); err != nil {
 			die("revoke: %v", err)
 		}
-		fmt.Println("revoked (cached copies expire within 30s)")
+		fmt.Println("revoked and cluster invalidation published")
 	case "key verify":
 		if *keyVal == "" {
 			die("--key is required")

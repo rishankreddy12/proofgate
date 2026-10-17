@@ -19,6 +19,7 @@ import (
 // deep within the pipeline stages.
 func (h *Handlers) ChatInternal(ctx context.Context, route string, req *api.ChatRequest) (*api.ChatResponse, error) {
 	rt := h.State.Load()
+	pipe := h.pipelineFor(rt)
 	r, err := rt.Router.Resolve(route, true)
 	if err != nil {
 		return nil, err
@@ -39,7 +40,7 @@ func (h *Handlers) ChatInternal(ctx context.Context, route string, req *api.Chat
 	c.Values["usage.kind"] = "judge"
 
 	// Execute Pre-flight
-	handled, err := h.Pipeline.Before(ctx, c)
+	handled, err := pipe.Before(ctx, c)
 	if err == nil && !handled {
 		// Execute Upstream
 		err = upstreamError(h.execChat(ctx, rt, c))
@@ -49,7 +50,7 @@ func (h *Handlers) ChatInternal(ctx context.Context, route string, req *api.Chat
 	c.Latency = time.Since(c.Start)
 
 	// Execute Post-flight
-	h.Pipeline.After(ctx, c)
+	pipe.After(ctx, c)
 
 	if err != nil {
 		return nil, err

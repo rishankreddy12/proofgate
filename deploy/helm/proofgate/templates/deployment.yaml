@@ -58,17 +58,20 @@ spec:
             httpGet:
               path: /healthz
               port: 8080
+            timeoutSeconds: 2
             failureThreshold: 30
             periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
+            timeoutSeconds: 2
             periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /readyz
               port: 9090
+            timeoutSeconds: 2
             periodSeconds: 5
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

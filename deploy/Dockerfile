@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 ARG GO_VERSION=1.26
-FROM golang:1.25@sha256:699337d620559a59b4a2bb298ad59611e535d2ee755a34cf2d2a98f37578dc80 AS build
+FROM golang:1.26@sha256:d7722066f0b60ceccb6c0643cbed1f5f9e15506ac237146c95333504d7805d89 AS build
 WORKDIR /src
 ENV GOTOOLCHAIN=local
 COPY go.mod go.sum ./

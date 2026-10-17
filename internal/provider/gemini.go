@@ -22,6 +22,7 @@ type GeminiConfig struct {
 	BaseURL          string // https://generativelanguage.googleapis.com
 	APIKey           string
 	KeyFunc          KeyFunc
+	Headers          map[string]string
 	MaxResponseBytes int64
 }
 
@@ -258,6 +259,9 @@ func (p *Gemini) post(ctx context.Context, path string, body any) (*http.Respons
 	}
 	if key != "" {
 		req.Header.Set("x-goog-api-key", key)
+	}
+	for k, v := range p.cfg.Headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {

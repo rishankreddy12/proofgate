@@ -36,9 +36,9 @@ func NewRegistry(specs []Spec) (*Registry, error) {
 		case "openai":
 			p = NewOpenAI(OpenAIConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, Headers: s.Headers, MaxResponseBytes: s.MaxResponseBytes})
 		case "anthropic":
-			p = NewAnthropic(AnthropicConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, MaxResponseBytes: s.MaxResponseBytes})
+			p = NewAnthropic(AnthropicConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, Headers: s.Headers, MaxResponseBytes: s.MaxResponseBytes})
 		case "gemini":
-			p = NewGemini(GeminiConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, MaxResponseBytes: s.MaxResponseBytes})
+			p = NewGemini(GeminiConfig{Name: s.Name, BaseURL: s.BaseURL, APIKey: s.APIKey, KeyFunc: s.KeyFunc, Headers: s.Headers, MaxResponseBytes: s.MaxResponseBytes})
 		default:
 			return nil, fmt.Errorf("unknown provider type %q for %q", s.Type, s.Name)
 		}

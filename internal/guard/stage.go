@@ -112,6 +112,25 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 					totalRedacted += len(matches)
 				}
 			}
+
+			// Redact tool_calls arguments
+			for tcIdx := range msg.ToolCalls {
+				tc := &msg.ToolCalls[tcIdx]
+				if tc.Function.Arguments != "" {
+					matches := DetectPII(tc.Function.Arguments)
+					if len(matches) > 0 {
+						res := Redact(tc.Function.Arguments, matches, mode, num)
+						tc.Function.Arguments = res.Redacted
+						for k, v := range res.Mapping {
+							if existing, ok := allMapping[k]; ok && existing != v {
+								slog.Warn("PII mapping collision detected", "placeholder", k, "existing", existing, "new", v)
+							}
+							allMapping[k] = v
+						}
+						totalRedacted += len(matches)
+					}
+				}
+			}
 		}
 
 		if totalRedacted > 0 {
@@ -120,7 +139,17 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 
 			// If streaming, install chunk filter
 			if c.Stream && len(allMapping) > 0 {
-				restorer := NewStreamRestorer(allMapping)
+				contentRestorer := NewStreamRestorer(allMapping)
+				toolRestorers := make(map[int]*StreamRestorer)
+				getToolRestorer := func(idx int) *StreamRestorer {
+					if r, ok := toolRestorers[idx]; ok {
+						return r
+					}
+					r := NewStreamRestorer(allMapping)
+					toolRestorers[idx] = r
+					return r
+				}
+
 				c.Values[ChunkFilterKey] = func(ch *api.ChatChunk) *api.ChatChunk {
 					if ch == nil || len(ch.Choices) == 0 {
 						return ch
@@ -128,12 +157,31 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 					out := *ch
 					out.Choices = make([]api.ChunkChoice, len(ch.Choices))
 					copy(out.Choices, ch.Choices)
-					deltaText := out.Choices[0].Delta.Content
-					out.Choices[0].Delta.Content = restorer.Process(deltaText)
+					for chIdx := range out.Choices {
+						choice := &out.Choices[chIdx]
+						if choice.Delta.Content != "" {
+							choice.Delta.Content = contentRestorer.Process(choice.Delta.Content)
+						}
+						if len(choice.Delta.ToolCalls) > 0 {
+							newTCs := make([]api.ToolCall, len(choice.Delta.ToolCalls))
+							copy(newTCs, choice.Delta.ToolCalls)
+							for tcIdx := range newTCs {
+								tc := &newTCs[tcIdx]
+								if tc.Function.Arguments != "" {
+									idx := 0
+									if tc.Index != nil {
+										idx = *tc.Index
+									}
+									tc.Function.Arguments = getToolRestorer(idx).Process(tc.Function.Arguments)
+								}
+							}
+							choice.Delta.ToolCalls = newTCs
+						}
+					}
 					return &out
 				}
 				c.Values["guard.stream_flush"] = func() string {
-					return restorer.Flush()
+					return contentRestorer.Flush()
 				}
 			}
 		}
@@ -154,6 +202,12 @@ func (s *Stage) Respond(ctx context.Context, c *pipeline.Call) {
 	for i := range cr.Choices {
 		text := cr.Choices[i].Message.Content.PlainText()
 		cr.Choices[i].Message.Content = api.Content{Text: Restore(text, mapping)}
+		for tcIdx := range cr.Choices[i].Message.ToolCalls {
+			tc := &cr.Choices[i].Message.ToolCalls[tcIdx]
+			if tc.Function.Arguments != "" {
+				tc.Function.Arguments = Restore(tc.Function.Arguments, mapping)
+			}
+		}
 	}
 	c.ClientResponse = cr
 }

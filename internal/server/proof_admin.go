@@ -61,7 +61,7 @@ func (h *ProofAdminHandlers) CacheCurve(w http.ResponseWriter, r *http.Request) 
 
 	route := r.URL.Query().Get("route")
 	if route == "" {
-		http.Error(w, `{"error": "route query parameter is required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "route query parameter is required")
 		return
 	}
 
@@ -74,7 +74,7 @@ func (h *ProofAdminHandlers) CacheCurve(w http.ResponseWriter, r *http.Request) 
 
 	rec, curve, n, err := proof.TuneCache(r.Context(), h.Store, route, targetFHR, time.Time{})
 	if err != nil {
-		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -159,7 +159,7 @@ func (h *ProofAdminHandlers) CacheApply(w http.ResponseWriter, r *http.Request) 
 		Actor:  "admin",
 	})
 	if err1 != nil {
-		http.Error(w, `{"error": "`+err1.Error()+`"}`, http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, err1.Error())
 		return
 	}
 
@@ -172,7 +172,7 @@ func (h *ProofAdminHandlers) CacheApply(w http.ResponseWriter, r *http.Request) 
 		Actor:  "admin",
 	})
 	if err2 != nil {
-		http.Error(w, `{"error": "`+err2.Error()+`"}`, http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, err2.Error())
 		return
 	}
 
@@ -187,4 +187,10 @@ func (h *ProofAdminHandlers) CacheApply(w http.ResponseWriter, r *http.Request) 
 		CacheMode:      "on",
 		CacheThreshold: threshold,
 	})
+}
+
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

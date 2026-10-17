@@ -46,6 +46,11 @@ type Deps struct {
 	Client              *http.Client
 	MaxRequestBodyBytes int64
 	RequestTimeout      time.Duration
+	// Optional dynamic providers used by the desktop/server runtime when
+	// configuration is hot-reloaded. Static fields remain supported for tests
+	// and embedders that do not reload configuration.
+	MaxRequestBodyBytesFunc func() int64
+	RequestTimeoutFunc      func() time.Duration
 }
 
 // Proxy defines the core enterprise configuration and state for Proxy.
@@ -70,6 +75,9 @@ func (p *Proxy) forward(r *http.Request, up Upstream, body []byte) (*http.Respon
 	ctx := r.Context()
 	if r.Method == http.MethodPost {
 		timeout := p.d.RequestTimeout
+		if p.d.RequestTimeoutFunc != nil {
+			timeout = p.d.RequestTimeoutFunc()
+		}
 		if timeout <= 0 {
 			timeout = 60 * time.Second
 		}
@@ -113,6 +121,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 	if r.Method != http.MethodPost {
+		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
+			api.WriteError(w, &api.Error{Status: http.StatusMethodNotAllowed, Message: "method not allowed", Type: "invalid_request_error", Code: "method_not_allowed"})
+			return
+		}
 		p.passthrough(w, r, up, nil, func(status int, filtered bool) {
 			p.d.Audit(Audit{
 				TS:        start,
@@ -129,6 +141,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	maxBody := p.d.MaxRequestBodyBytes
+	if p.d.MaxRequestBodyBytesFunc != nil {
+		maxBody = p.d.MaxRequestBodyBytesFunc()
+	}
 	if maxBody <= 0 {
 		maxBody = 4 << 20
 	}
@@ -137,15 +152,18 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, api.BadRequest("body too large or unreadable"))
 		return
 	}
-	msgs, batch, err := Parse(body)
+	msgs, batch, err := StrictParse(body)
 	if err != nil {
-		api.WriteError(w, api.BadRequest("invalid JSON-RPC"))
+		api.WriteError(w, api.BadRequest("invalid JSON-RPC: "+err.Error()))
 		return
 	}
 
 	var refused []Message
 	listIDs := map[string]bool{}
 	for _, m := range msgs {
+		if m.Method == "" && len(m.ID) > 0 && (len(m.Result) > 0 || m.Error != nil) {
+			continue
+		}
 		if !MethodAllowed(principal.Key.MCP, name, m.Method) {
 			refused = append(refused, ErrorMessage(m.ID, CodeMethodDenied, fmt.Sprintf("method %s is not allowed for this key on server %s", m.Method, name)))
 			p.d.Audit(Audit{
@@ -209,10 +227,22 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var canonicalBody []byte
+	if batch {
+		canonicalBody, err = json.Marshal(msgs)
+	} else {
+		canonicalBody, err = json.Marshal(msgs[0])
+	}
+	if err != nil {
+		api.WriteError(w, api.BadRequest("invalid JSON-RPC"))
+		return
+	}
+
 	filter := &filterSpec{
-		body:    body,
-		listIDs: listIDs,
-		allow:   func(t string) bool { return Allowed(principal.Key.MCP, name, t) },
+		body:     canonicalBody,
+		original: body,
+		listIDs:  listIDs,
+		allow:    func(t string) bool { return Allowed(principal.Key.MCP, name, t) },
 	}
 	p.passthrough(w, r, up, filter, func(status int, filtered bool) {
 		latencyMs := uint32(time.Since(start).Milliseconds())
@@ -258,9 +288,10 @@ func writeRefusal(w http.ResponseWriter, msgs, refused []Message, batch bool) {
 }
 
 type filterSpec struct {
-	body    []byte
-	listIDs map[string]bool
-	allow   func(string) bool
+	body     []byte
+	original []byte
+	listIDs  map[string]bool
+	allow    func(string) bool
 }
 
 func (f *filterSpec) apply(data []byte) ([]byte, bool) {

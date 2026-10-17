@@ -3,6 +3,7 @@ package auth
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
+	"github.com/proofgate/proofgate/internal/control"
 	"github.com/proofgate/proofgate/internal/store"
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
@@ -141,7 +143,9 @@ func (m *Middleware) resolve(ctx context.Context, key string) (Principal, bool, 
 			return Principal{}, store.ErrNotFound
 		}
 
-		rec, dbErr := m.lookup.KeyByHash(ctx, []byte(h))
+		sfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		rec, dbErr := m.lookup.KeyByHash(sfCtx, []byte(h))
 		if dbErr != nil {
 			if errors.Is(dbErr, store.ErrNotFound) {
 				m.negCache.Set(h, struct{}{}) // Populate Negative Cache
@@ -247,6 +251,38 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 func (m *Middleware) EvictKey(keyHash string) {
 	m.posCache.Remove(keyHash)
 	m.negCache.Remove(keyHash)
+	if decoded, err := hex.DecodeString(keyHash); err == nil {
+		binaryHash := string(decoded)
+		m.posCache.Remove(binaryHash)
+		m.negCache.Remove(binaryHash)
+	}
+}
+
+// EvictTenant removes all positive entries belonging to a tenant. API-key
+// hashes remain local cache keys, so tenant erasure must inspect the cached
+// Principal values rather than guessing a hash; negative entries have no
+// tenant association and remain bounded by their TTL/capacity.
+func (m *Middleware) EvictTenant(tenantID string) int {
+	if strings.TrimSpace(tenantID) == "" {
+		return 0
+	}
+	return m.posCache.RemoveWhere(func(_ string, p Principal) bool { return p.TenantID == tenantID })
+}
+
+// SubscribeControl connects this replica's auth cache to the cross-replica
+// control bus. Messages contain only a key digest or tenant identifier.
+func (m *Middleware) SubscribeControl(bus *control.Bus) {
+	if m == nil || bus == nil {
+		return
+	}
+	bus.Subscribe(control.OpKeyRevoked, func(_ context.Context, msg control.Message) error {
+		m.EvictKey(msg.Args["key_hash"])
+		return nil
+	})
+	bus.Subscribe(control.OpTenantErased, func(_ context.Context, msg control.Message) error {
+		m.EvictTenant(msg.Args["tenant_id"])
+		return nil
+	})
 }
 
 // Purge triggers an aggressive eviction of all entries from both positive and negative auth caches.

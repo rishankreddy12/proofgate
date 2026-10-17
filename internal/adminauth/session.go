@@ -169,13 +169,13 @@ func (s *Service) ValidateSession(ctx context.Context, token string) (*AdminSess
 	now := time.Now().UTC()
 	// Check absolute timeout
 	if now.Sub(sess.CreatedAt) > s.cfg.SessionAbsTimeout {
-		_ = s.RevokeSession(ctx, key)
+		_ = s.RevokeSession(ctx, hashHex)
 		return nil, ErrSessionExpired
 	}
 
 	// Check idle timeout
 	if now.Sub(sess.LastActiveAt) > s.cfg.SessionIdleTimeout {
-		_ = s.RevokeSession(ctx, key)
+		_ = s.RevokeSession(ctx, hashHex)
 		return nil, ErrSessionIdle
 	}
 
@@ -183,7 +183,7 @@ func (s *Service) ValidateSession(ctx context.Context, token string) (*AdminSess
 	sess.LastActiveAt = now
 	remaining := sess.CreatedAt.Add(s.cfg.SessionAbsTimeout).Sub(now)
 	if remaining <= 0 {
-		_ = s.RevokeSession(ctx, key)
+		_ = s.RevokeSession(ctx, hashHex)
 		return nil, ErrSessionExpired
 	}
 

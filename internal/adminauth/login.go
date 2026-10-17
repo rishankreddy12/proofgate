@@ -47,6 +47,7 @@ func (s *Service) CheckLoginLockout(ctx context.Context, username string, option
 			}
 			return true, ttl, nil
 		}
+		return false, 0, nil
 	}
 
 	// Legacy / user fallback
@@ -133,7 +134,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	nUser, _ := s.sessions.IncrWithTTL(ctx, userAlertKey, s.cfg.LockoutDuration)
 	nLegacy, _ := s.sessions.IncrWithTTL(ctx, legacyKey, s.cfg.LockoutDuration)
 
-	if nUser >= 100 {
+	if nUser >= 100 || nLegacy >= 100 {
 		slog.Warn("security alert: excessive failed logins targeting username", "username", username, "attempts", nUser)
 	}
 
@@ -142,7 +143,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 		_ = s.store.RecordAdminAudit(ctx, username, "login_ip_locked", username, map[string]any{"ip": ip, "attempts": nIP}, ip, "denied")
 		return "", nil, ErrIPRateLimited
 	}
-	if nUserIP > int64(s.cfg.MaxLoginAttempts) || nLegacy > int64(s.cfg.MaxLoginAttempts) {
+	if nUserIP > int64(s.cfg.MaxLoginAttempts) {
 		_ = s.store.RecordAdminAudit(ctx, username, "login_locked", username, map[string]any{"ip": ip, "attempts": nUserIP}, ip, "denied")
 		return "", nil, ErrAccountLocked
 	}
@@ -153,7 +154,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 		// User does not exist: compare against dummyHash for timing defense
 		_ = CheckPassword(dummyHash, password)
 		_ = s.store.RecordAdminAudit(ctx, username, "login_failed", username, map[string]any{"ip": ip, "reason": "not_found", "attempts": nUserIP}, ip, "denied")
-		if nUserIP == int64(s.cfg.MaxLoginAttempts) || nLegacy == int64(s.cfg.MaxLoginAttempts) {
+		if nUserIP == int64(s.cfg.MaxLoginAttempts) {
 			_ = s.store.RecordAdminAudit(ctx, username, "login_locked", username, map[string]any{"ip": ip, "attempts": nUserIP}, ip, "denied")
 		}
 		return "", nil, ErrInvalidCredentials
@@ -163,7 +164,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	if !user.Enabled {
 		_ = CheckPassword(user.PasswordHash, password)
 		_ = s.store.RecordAdminAudit(ctx, username, "login_failed", username, map[string]any{"ip": ip, "reason": "disabled", "attempts": nUserIP}, ip, "denied")
-		if nUserIP == int64(s.cfg.MaxLoginAttempts) || nLegacy == int64(s.cfg.MaxLoginAttempts) {
+		if nUserIP == int64(s.cfg.MaxLoginAttempts) {
 			_ = s.store.RecordAdminAudit(ctx, username, "login_locked", username, map[string]any{"ip": ip, "attempts": nUserIP}, ip, "denied")
 		}
 		return "", nil, ErrInvalidCredentials
@@ -172,7 +173,7 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	// Verify password
 	if err := CheckPassword(user.PasswordHash, password); err != nil {
 		_ = s.store.RecordAdminAudit(ctx, username, "login_failed", username, map[string]any{"ip": ip, "reason": "invalid_password", "attempts": nUserIP}, ip, "denied")
-		if nUserIP == int64(s.cfg.MaxLoginAttempts) || nLegacy == int64(s.cfg.MaxLoginAttempts) {
+		if nUserIP == int64(s.cfg.MaxLoginAttempts) {
 			_ = s.store.RecordAdminAudit(ctx, username, "login_locked", username, map[string]any{"ip": ip, "attempts": nUserIP}, ip, "denied")
 		}
 		return "", nil, ErrInvalidCredentials

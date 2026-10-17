@@ -361,6 +361,31 @@ Virtual routes define client model aliases, failover, caching, and guardrails.
 | `stream_idle_timeout` | duration | `15s` | Timeout between streaming chunks before aborting stalled streams. |
 | `embeddings` | boolean | `false` | When `true`, route accepts `/v1/embeddings` requests instead of chat. |
 
+Semantic caching requires an embedding route whose target is an embedding
+model, rather than a chat model. For example, with a database-sealed OpenAI
+credential:
+
+```yaml
+providers:
+  - name: openai
+    type: openai
+    base_url: "https://api.openai.com/v1"
+    api_key_db: true
+
+routes:
+  - name: embed-real
+    embeddings: true
+    targets:
+      - {provider: openai, model: text-embedding-3-small}
+  - name: faq
+    targets:
+      - {provider: openai, model: gpt-4o-mini}
+    cache:
+      mode: on
+      semantic: true
+      embedding_route: embed-real
+```
+
 ---
 
 ## 7. Caching (`cache`)
@@ -477,6 +502,7 @@ Defines latency and error budgets per target model for health degradation tracki
 | `gossip_peers` | list | `[]` | Seed list of peer addresses for health state synchronization across the cluster. |
 | `share_mode` | string | `"redis"` | Cross-replica health state sharing mode: `redis` (via Redis hashes), `gossip` (UDP memberlist), or `none`. Overridable via `PROOFGATE_HEALTH_SHARE_MODE`. Defaults to `redis` when Redis is configured. |
 | `gossip_secret` | string | `""` | HMAC-SHA256 secret key for signing and verifying UDP gossip datagrams (overridable via `PROOFGATE_GOSSIP_SECRET`). |
+| `gossip_allow_unsigned` | boolean | `false` | Explicitly permits unsigned UDP gossip packets when `gossip_secret` is not set (overridable via `PROOFGATE_GOSSIP_ALLOW_UNSIGNED`). Required if running gossip mode without a secret. |
 
 ---
 

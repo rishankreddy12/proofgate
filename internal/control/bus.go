@@ -3,10 +3,13 @@ package control
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +17,11 @@ import (
 )
 
 const (
+	// ProtocolVersion is the version of the control-bus envelope. Receivers may
+	// continue to accept version zero for compatibility with pre-versioned
+	// messages, while publishers always emit the current version.
+	ProtocolVersion = 1
+
 	// DefaultChannel defines a specific variation or structural setting for DefaultChannel.
 	DefaultChannel = "proofgate:ctl"
 
@@ -25,15 +33,115 @@ const (
 	OpReload = "reload"
 	// OpKeyRevoked defines a specific variation or structural setting for OpKeyRevoked.
 	OpKeyRevoked = "key_revoked"
+	// OpCredentialInvalidated tells replicas to evict one provider's decrypted
+	// credential without carrying the credential itself.
+	OpCredentialInvalidated = "credential_invalidated"
+	// OpTenantErased tells replicas to drop tenant-scoped in-memory state.
+	OpTenantErased = "tenant_erased"
 )
 
 // Message defines the core enterprise configuration and state for Message.
 // It is responsible for managing the lifecycle, validation, and schema of the Message entity.
 type Message struct {
-	Op     string            `json:"op"`
-	Args   map[string]string `json:"args,omitempty"`
-	TS     time.Time         `json:"ts"`
-	Sender string            `json:"sender,omitempty"`
+	Version int               `json:"version"`
+	Op      string            `json:"op"`
+	Args    map[string]string `json:"args,omitempty"`
+	TS      time.Time         `json:"ts"`
+	Sender  string            `json:"sender,omitempty"`
+}
+
+// Validate checks the control envelope and rejects fields that could carry a
+// secret. Control messages are intentionally identifiers and invalidation
+// metadata only; provider/API credentials must never cross this bus.
+func (m Message) Validate() error {
+	if m.Version != 0 && m.Version != ProtocolVersion {
+		return fmt.Errorf("unsupported control message version %d", m.Version)
+	}
+	if m.Op == "" {
+		return errors.New("control operation required")
+	}
+	allowed := map[string]map[string]bool{
+		OpPurgeSecrets:          {"reason": true},
+		OpPurgeCache:            {"tenant_id": true, "route": true, "tags": true},
+		OpReload:                {},
+		OpKeyRevoked:            {"key_hash": true},
+		OpCredentialInvalidated: {"provider": true, "version": true},
+		OpTenantErased:          {"tenant_id": true, "receipt_id": true},
+	}
+	keys, knownOp := allowed[m.Op]
+	if !knownOp {
+		return fmt.Errorf("unsupported control operation %q", m.Op)
+	}
+	for key, value := range m.Args {
+		if !keys[key] {
+			return fmt.Errorf("argument %q is not allowed for %s", key, m.Op)
+		}
+		lowerKey := strings.ToLower(key)
+		if strings.Contains(lowerKey, "secret") || strings.Contains(lowerKey, "token") ||
+			strings.Contains(lowerKey, "password") || strings.Contains(lowerKey, "api_key") ||
+			strings.Contains(lowerKey, "plaintext") {
+			return fmt.Errorf("secret-bearing argument %q is not allowed", key)
+		}
+		if strings.HasPrefix(value, "pg_") || strings.HasPrefix(value, "sk-") || strings.HasPrefix(value, "sk_") {
+			return fmt.Errorf("secret-looking value is not allowed for %q", key)
+		}
+	}
+	switch m.Op {
+	case OpKeyRevoked:
+		if strings.TrimSpace(m.Args["key_hash"]) == "" {
+			return errors.New("key_hash required")
+		}
+	case OpCredentialInvalidated:
+		if strings.TrimSpace(m.Args["provider"]) == "" {
+			return errors.New("provider required")
+		}
+		version, err := strconv.Atoi(m.Args["version"])
+		if err != nil || version <= 0 {
+			return errors.New("positive credential version required")
+		}
+	case OpTenantErased:
+		if strings.TrimSpace(m.Args["tenant_id"]) == "" {
+			return errors.New("tenant_id required")
+		}
+	}
+	return nil
+}
+
+// KeyRevokedArgs creates the only supported API-key revocation payload from a
+// digest. It is impossible for the plaintext key to enter the message.
+func KeyRevokedArgs(hash []byte) map[string]string {
+	return map[string]string{"key_hash": hex.EncodeToString(hash)}
+}
+
+// CredentialInvalidatedArgs creates a provider invalidation payload containing
+// only the provider identifier and committed credential version.
+func CredentialInvalidatedArgs(provider string, version int) map[string]string {
+	return map[string]string{"provider": provider, "version": fmt.Sprintf("%d", version)}
+}
+
+// TenantErasedArgs creates a tenant invalidation payload without tenant data.
+func TenantErasedArgs(tenantID, receiptID string) map[string]string {
+	args := map[string]string{"tenant_id": tenantID}
+	if receiptID != "" {
+		args["receipt_id"] = receiptID
+	}
+	return args
+}
+
+// PublishKeyRevoked publishes a digest-only key invalidation event.
+func PublishKeyRevoked(ctx context.Context, bus *Bus, hash []byte) error {
+	if bus == nil {
+		return errors.New("control bus not configured")
+	}
+	return bus.Publish(ctx, OpKeyRevoked, KeyRevokedArgs(hash))
+}
+
+// PublishCredentialInvalidated publishes provider/version metadata only.
+func PublishCredentialInvalidated(ctx context.Context, bus *Bus, provider string, version int) error {
+	if bus == nil {
+		return errors.New("control bus not configured")
+	}
+	return bus.Publish(ctx, OpCredentialInvalidated, CredentialInvalidatedArgs(provider, version))
 }
 
 // HandlerFunc defines the core enterprise configuration and state for HandlerFunc.
@@ -91,10 +199,14 @@ func (b *Bus) Publish(ctx context.Context, op string, args map[string]string) er
 		return errors.New("redis client not configured")
 	}
 	msg := Message{
-		Op:     op,
-		Args:   args,
-		TS:     time.Now().UTC(),
-		Sender: b.sender,
+		Version: ProtocolVersion,
+		Op:      op,
+		Args:    cloneArgs(args),
+		TS:      time.Now().UTC(),
+		Sender:  b.sender,
+	}
+	if err := msg.Validate(); err != nil {
+		return fmt.Errorf("invalid control message: %w", err)
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -106,6 +218,13 @@ func (b *Bus) Publish(ctx context.Context, op string, args map[string]string) er
 // Dispatch executes the primary logic for the Dispatch operation.
 // It ensures thread-safe execution, input validation, and proper error handling.
 func (b *Bus) Dispatch(ctx context.Context, msg Message) {
+	if err := msg.Validate(); err != nil {
+		slog.Warn("invalid control message", "op", msg.Op, "sender", msg.Sender, "err", err)
+		return
+	}
+	if msg.Version == 0 {
+		msg.Version = ProtocolVersion
+	}
 	b.mu.RLock()
 	ops := append([]HandlerFunc(nil), b.handlers[msg.Op]...)
 	wildcards := append([]HandlerFunc(nil), b.handlers["*"]...)
@@ -153,7 +272,7 @@ func (b *Bus) Run(ctx context.Context) error {
 				}
 				var cm Message
 				if err := json.Unmarshal([]byte(msg.Payload), &cm); err != nil {
-					slog.Warn("malformed control message", "payload", msg.Payload, "err", err)
+					slog.Warn("malformed control message", "err", err)
 					continue
 				}
 				b.Dispatch(ctx, cm)
@@ -168,4 +287,15 @@ func (b *Bus) Run(ctx context.Context) error {
 		case <-time.After(1 * time.Second):
 		}
 	}
+}
+
+func cloneArgs(args map[string]string) map[string]string {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(args))
+	for k, v := range args {
+		out[k] = v
+	}
+	return out
 }

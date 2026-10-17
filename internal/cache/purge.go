@@ -3,6 +3,7 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -20,6 +21,16 @@ type PurgeOptions struct {
 // PurgeResult returns the count of unlinked keys.
 type PurgeResult struct {
 	DeletedKeys int64 `json:"deleted_keys"`
+}
+
+// PurgeTenant removes every exact, semantic, and tag-index key in one
+// tenant's cache namespace. The tenant hash tag keeps this operation scoped
+// and compatible with the existing Redis key format.
+func PurgeTenant(ctx context.Context, rdb *redis.Client, tenantID string) (*PurgeResult, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return nil, fmt.Errorf("tenant id required")
+	}
+	return Purge(ctx, rdb, PurgeOptions{TenantID: tenantID})
 }
 
 // Purge deletes cache keys matching the given options using SMEMBERS/SCAN and UNLINK.

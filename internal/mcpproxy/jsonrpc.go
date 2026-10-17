@@ -4,7 +4,132 @@ package mcpproxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
 )
+
+// rejectDuplicateKeys validates that no JSON object in data contains duplicate or case-variant keys.
+func rejectDuplicateKeys(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return fmt.Errorf("empty JSON body")
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+
+	if delim, ok := tok.(json.Delim); ok {
+		switch delim {
+		case '{':
+			if err := checkObject(dec); err != nil {
+				return err
+			}
+		case '[':
+			if err := checkArray(dec); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("expected JSON object or array, got %v", delim)
+		}
+	} else {
+		return fmt.Errorf("expected JSON object or array, got %v", tok)
+	}
+
+	if dec.More() {
+		return fmt.Errorf("unexpected trailing data in JSON")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return fmt.Errorf("unexpected trailing data after JSON")
+	}
+	return nil
+}
+
+func checkObject(dec *json.Decoder) error {
+	seen := make(map[string]struct{})
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return fmt.Errorf("expected string object key, got %T", tok)
+		}
+		lowerKey := strings.ToLower(key)
+		if _, exists := seen[lowerKey]; exists {
+			return fmt.Errorf("duplicate or case-variant key in JSON object: %q", key)
+		}
+		seen[lowerKey] = struct{}{}
+
+		valTok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if delim, ok := valTok.(json.Delim); ok {
+			switch delim {
+			case '{':
+				if err := checkObject(dec); err != nil {
+					return err
+				}
+			case '[':
+				if err := checkArray(dec); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	endTok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := endTok.(json.Delim); !ok || delim != '}' {
+		return fmt.Errorf("expected '}', got %v", endTok)
+	}
+	return nil
+}
+
+func checkArray(dec *json.Decoder) error {
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if delim, ok := tok.(json.Delim); ok {
+			switch delim {
+			case '{':
+				if err := checkObject(dec); err != nil {
+					return err
+				}
+			case '[':
+				if err := checkArray(dec); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	endTok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := endTok.(json.Delim); !ok || delim != ']' {
+		return fmt.Errorf("expected ']', got %v", endTok)
+	}
+	return nil
+}
+
+// StrictParse executes the primary logic for the Parse operation with strict duplicate-key validation.
+// It rejects duplicate or case-variant keys anywhere in the JSON body.
+func StrictParse(body []byte) ([]Message, bool, error) {
+	if err := rejectDuplicateKeys(body); err != nil {
+		return nil, false, err
+	}
+	return Parse(body)
+}
 
 // RPCError defines the core enterprise configuration and state for RPCError.
 // It is responsible for managing the lifecycle, validation, and schema of the RPCError entity.

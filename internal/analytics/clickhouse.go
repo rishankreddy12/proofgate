@@ -102,19 +102,34 @@ func PurgeTenantData(ctx context.Context, conn driver.Conn, tenantID string) err
 		return nil
 	}
 
-	tables := []string{
-		"usage_events",
-		"cache_shadow",
-		"routing_shadow",
-		"routing_decisions",
-		"mcp_calls",
+	// cache_labels has no tenant_id column; its shadow_id is the ownership link
+	// to cache_shadow and must be removed before the shadow mutation.
+	queries := []string{
+		"ALTER TABLE cache_labels DELETE WHERE shadow_id IN (SELECT id FROM cache_shadow WHERE tenant_id = ?)",
+		"ALTER TABLE usage_events DELETE WHERE tenant_id = ?",
+		"ALTER TABLE cache_shadow DELETE WHERE tenant_id = ?",
+		"ALTER TABLE routing_shadow DELETE WHERE tenant_id = ?",
+		"ALTER TABLE routing_decisions DELETE WHERE tenant_id = ?",
+		"ALTER TABLE mcp_calls DELETE WHERE tenant_id = ?",
 	}
 
-	for _, tbl := range tables {
-		query := fmt.Sprintf("ALTER TABLE %s DELETE WHERE tenant_id = ?", tbl)
+	for _, query := range queries {
 		if err := conn.Exec(ctx, query, tenantID); err != nil {
-			return fmt.Errorf("purge table %s for tenant %s: %w", tbl, tenantID, err)
+			return fmt.Errorf("purge tenant analytics: %w", err)
 		}
 	}
 	return nil
+}
+
+// TenantPurger adapts the package-level purge operation to the store erasure
+// orchestration interface.
+type TenantPurger struct{ Conn driver.Conn }
+
+func NewTenantPurger(conn driver.Conn) TenantPurger { return TenantPurger{Conn: conn} }
+
+func (p TenantPurger) PurgeTenantData(ctx context.Context, tenantID string) error {
+	if p.Conn == nil {
+		return errors.New("clickhouse store not configured")
+	}
+	return PurgeTenantData(ctx, p.Conn, tenantID)
 }

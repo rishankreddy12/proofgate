@@ -4,6 +4,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,6 +14,8 @@ import (
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/budget"
+	"github.com/proofgate/proofgate/internal/config"
+	"github.com/proofgate/proofgate/internal/guard"
 	"github.com/proofgate/proofgate/internal/router"
 )
 
@@ -43,7 +47,11 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 
 	var req api.EmbeddingRequest
-	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, h.maxBody())).Decode(&req); err != nil {
+	maxBody := h.maxBody()
+	if rt != nil && rt.Config != nil && rt.Config.Server.MaxRequestBodyBytes > 0 {
+		maxBody = rt.Config.Server.MaxRequestBodyBytes
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBody)).Decode(&req); err != nil {
 		api.WriteError(w, api.BadRequest("invalid JSON"))
 		return
 	}
@@ -57,6 +65,11 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		api.WriteError(w, err)
 		return
+	}
+
+	upstreamReq, piiRedacted := redactEmbeddingRequest(req, route.Guard.PII)
+	if piiRedacted > 0 {
+		w.Header().Set("X-ProofGate-PII-Redacted", strconv.Itoa(piiRedacted))
 	}
 
 	ev := EmbedEvent{Principal: p, Route: route.Name}
@@ -99,12 +112,70 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Phase: Fiat Budget verification
-	if h.Ledger != nil && p.Tenant.BudgetMicros() > 0 {
-		if spent, err := h.Ledger.Spent(ctx, p.TenantID, budget.Month(h.Now())); err == nil && spent >= p.Tenant.BudgetMicros() {
-			ev.Err = api.BudgetExceeded("monthly budget reached")
-			api.WriteError(w, ev.Err)
-			return
+	// Phase: Fiat Budget verification and atomic reservation
+	budgetLimit := p.Tenant.BudgetMicros()
+	budgetMonth := budget.Month(h.Now())
+	var reservedCost int64
+	hasBudgetReservation := false
+
+	if h.Ledger != nil && budgetLimit > 0 {
+		targets := make([]string, 0, len(route.Targets))
+		for _, t := range route.Targets {
+			targets = append(targets, t.String())
+		}
+		if len(targets) == 0 && req.Model != "" {
+			targets = []string{req.Model}
+		}
+
+		isStrict := rt.Config == nil || rt.Config.Budget.IsReserveStrict()
+		requirePricing := rt.Config == nil || rt.Config.Budget.IsRequirePricing()
+
+		if rt.Pricing != nil && len(targets) > 0 {
+			estCost, priced := rt.Pricing.EstimateMaxMicros(targets, est, 0)
+			if !priced && requirePricing {
+				ev.Err = &api.Error{
+					Status:  500,
+					Message: fmt.Sprintf("unpriced target in embeddings route for tenant %s with monthly budget", p.TenantID),
+					Type:    "api_error",
+					Code:    "unpriced_target",
+				}
+				api.WriteError(w, ev.Err)
+				return
+			}
+			reservedCost = estCost
+		}
+
+		if isStrict {
+			ok, spent, err := h.Ledger.Reserve(ctx, p.TenantID, budgetMonth, reservedCost, budgetLimit)
+			if err != nil {
+				if p.Tenant.Strict {
+					ev.Err = &api.Error{Status: 503, Message: "budget ledger unavailable", Type: "api_error", Code: "budget_unavailable"}
+					api.WriteError(w, ev.Err)
+					return
+				}
+				slog.Warn("embeddings budget ledger unavailable, failing open", "tenant", p.TenantID, "err", err)
+			} else if !ok {
+				ev.Err = api.BudgetExceeded(fmt.Sprintf("monthly budget of $%.2f reached", float64(budgetLimit)/1e6))
+				api.WriteError(w, ev.Err)
+				return
+			} else {
+				hasBudgetReservation = true
+				w.Header().Set("X-ProofGate-Budget-Remaining-USD", fmt.Sprintf("%.6f", max(0, float64(budgetLimit-spent)/1e6)))
+			}
+		} else {
+			spent, err := h.Ledger.Spent(ctx, p.TenantID, budgetMonth)
+			if err != nil {
+				if p.Tenant.Strict {
+					ev.Err = &api.Error{Status: 503, Message: "budget ledger unavailable", Type: "api_error", Code: "budget_unavailable"}
+					api.WriteError(w, ev.Err)
+					return
+				}
+				slog.Warn("embeddings budget ledger unavailable, failing open", "tenant", p.TenantID, "err", err)
+			} else if spent >= budgetLimit {
+				ev.Err = api.BudgetExceeded(fmt.Sprintf("monthly budget of $%.2f reached", float64(budgetLimit)/1e6))
+				api.WriteError(w, ev.Err)
+				return
+			}
 		}
 	}
 
@@ -126,7 +197,7 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 				ctx, cancel = context.WithTimeout(ctx, route.Timeout)
 				defer cancel()
 			}
-			resp, err := pr.Embed(ctx, t.Model, &req)
+			resp, err := pr.Embed(ctx, t.Model, &upstreamReq)
 			if err == nil {
 				out = resp
 			}
@@ -144,6 +215,11 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 		if charged {
 			_ = h.Limiter.Adjust(bg, p.TenantID, p.Tenant, est) // Refund the heuristic pre-charge
 		}
+		if hasBudgetReservation && reservedCost > 0 {
+			if rErr := h.Ledger.Add(bg, p.TenantID, budgetMonth, -reservedCost); rErr != nil {
+				slog.Error("embeddings budget refund failed", "tenant", p.TenantID, "err", rErr)
+			}
+		}
 		if e := upstreamError(err); e != nil {
 			api.WriteError(w, e)
 		}
@@ -151,7 +227,21 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tokens := out.Usage.PromptTokens
-	cost, _ := rt.Pricing.CostMicros(ev.Target, api.Usage{PromptTokens: tokens})
+	cost, priced := rt.Pricing.CostMicros(ev.Target, api.Usage{PromptTokens: tokens})
+	requirePricing := rt.Config == nil || rt.Config.Budget.IsRequirePricing()
+	if !priced && requirePricing && rt.Pricing != nil {
+		if charged {
+			_ = h.Limiter.Adjust(bg, p.TenantID, p.Tenant, est-tokens)
+		}
+		if hasBudgetReservation && reservedCost > 0 {
+			if rErr := h.Ledger.Add(bg, p.TenantID, budgetMonth, -reservedCost); rErr != nil {
+				slog.Error("embeddings budget refund failed", "tenant", p.TenantID, "err", rErr)
+			}
+		}
+		ev.Err = &api.Error{Status: 500, Message: "unpriced embeddings target", Type: "api_error", Code: "unpriced_target"}
+		api.WriteError(w, ev.Err)
+		return
+	}
 
 	ev.Tokens = tokens
 	ev.CostMicros = cost
@@ -171,8 +261,46 @@ func (h *Handlers) Embeddings(w http.ResponseWriter, r *http.Request) {
 		_ = h.Limiter.Adjust(bg, p.TenantID, p.Tenant, est-tokens)
 	}
 
-	// Charge the fiat budget ledger
-	if h.Ledger != nil && cost > 0 {
-		_ = h.Ledger.Add(bg, p.TenantID, budget.Month(h.Now()), cost)
+	// Reconcile or charge the fiat budget ledger
+	if h.Ledger != nil {
+		if hasBudgetReservation {
+			delta := cost - reservedCost
+			if delta != 0 {
+				if rErr := h.Ledger.Add(bg, p.TenantID, budgetMonth, delta); rErr != nil {
+					slog.Error("embeddings budget reconcile failed", "tenant", p.TenantID, "delta", delta, "err", rErr)
+				}
+			}
+		} else if cost > 0 {
+			if rErr := h.Ledger.Add(bg, p.TenantID, budgetMonth, cost); rErr != nil {
+				slog.Error("embeddings budget charge failed", "tenant", p.TenantID, "cost", cost, "err", rErr)
+			}
+		}
 	}
+}
+
+// redactEmbeddingRequest returns an isolated request for upstream execution. The decoded
+// request remains unchanged so accounting, telemetry, and later middleware retain the caller's
+// original input while providers only receive the guarded text.
+func redactEmbeddingRequest(req api.EmbeddingRequest, cfg config.PIIGuardConfig) (api.EmbeddingRequest, int) {
+	out := req
+	out.Input = append(api.StringOrSlice(nil), req.Input...)
+	if !cfg.Enabled {
+		return out, 0
+	}
+	mode := cfg.Mode
+	if mode == "" {
+		mode = "redact"
+	}
+	numberer := make(guard.Numberer)
+	redacted := 0
+	for i, text := range req.Input {
+		matches := guard.DetectPII(text)
+		if len(matches) == 0 {
+			continue
+		}
+		result := guard.Redact(text, matches, mode, numberer)
+		out.Input[i] = result.Redacted
+		redacted += len(matches)
+	}
+	return out, redacted
 }

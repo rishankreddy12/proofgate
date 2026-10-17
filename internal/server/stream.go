@@ -182,7 +182,8 @@ func (h *Handlers) openStream(ctx context.Context, rt *Runtime, c *pipeline.Call
 // monolithic payload for cost-accounting/caching, and handles sudden client disconnections gracefully.
 func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runtime, c *pipeline.Call, handled bool) {
 	ctx := r.Context()
-	defer func() { h.Pipeline.After(ctx, c) }()
+	pipe := h.pipelineFor(rt)
+	defer func() { pipe.After(ctx, c) }()
 
 	var chunks <-chan *api.ChatChunk
 	var upstreamErr func() error
@@ -280,7 +281,7 @@ func (h *Handlers) serveStream(w http.ResponseWriter, r *http.Request, rt *Runti
 	}
 
 	if err := upstreamErr(); err != nil && !clientGone {
-		_ = sw.Data(map[string]*api.Error{"error": api.Upstream("stream interrupted: " + err.Error())})
+		_ = sw.Data(map[string]*api.Error{"error": api.Upstream("stream interrupted")})
 		c.Err = err
 	}
 

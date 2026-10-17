@@ -86,6 +86,14 @@ func (w *CacheLabelWorker) SetBuckets(b []BucketConfig) {
 	w.buckets = b
 }
 
+// SetRoutes updates the cache routes sampled by the background labeler. It is
+// safe to call while the worker is running during a configuration reload.
+func (w *CacheLabelWorker) SetRoutes(routes []string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.routes = append([]string(nil), routes...)
+}
+
 // SetNow executes the primary logic for the SetNow operation.
 // It ensures thread-safe execution, input validation, and proper error handling.
 func (w *CacheLabelWorker) SetNow(fn func() time.Time) {
@@ -102,10 +110,11 @@ func (w *CacheLabelWorker) RunOnce(ctx context.Context) (int, error) {
 	w.mu.Lock()
 	buckets := make([]BucketConfig, len(w.buckets))
 	copy(buckets, w.buckets)
+	routes := append([]string(nil), w.routes...)
 	w.mu.Unlock()
 
 	totalLabeled := 0
-	for _, route := range w.routes {
+	for _, route := range routes {
 		for _, b := range buckets {
 			if w.spend != nil {
 				can, err := w.spend.CanSpend(ctx, 1000)

@@ -3,8 +3,10 @@ package smartroute
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/proof"
 	"github.com/proofgate/proofgate/internal/router"
@@ -15,6 +17,22 @@ import (
 type DecisionRecorder interface {
 	EmitDecision(d proof.RoutingDecision)
 }
+
+// DecisionRecorderFunc adapts a function to the decision recorder contract.
+// The bool returned by analytics batchers is intentionally ignored here: a
+// dropped proof row must never affect the client request.
+type DecisionRecorderFunc func(proof.RoutingDecision)
+
+func (f DecisionRecorderFunc) EmitDecision(d proof.RoutingDecision) {
+	if f != nil {
+		f(d)
+	}
+}
+
+// ShadowCallback receives a live smart-routing decision and the selected
+// response. The callback owns any counterfactual provider call and must not
+// block the client request.
+type ShadowCallback func(context.Context, proof.RoutingShadowTask, *api.ChatRequest)
 
 // KNNClassifier defines the core enterprise configuration and state for KNNClassifier.
 // It is responsible for managing the lifecycle, validation, and schema of the KNNClassifier entity.
@@ -28,16 +46,22 @@ type Stage struct {
 	classifier *RuleClassifier
 	knn        KNNClassifier
 	recorder   DecisionRecorder
+	shadow     ShadowCallback
 	nowFn      func() time.Time
 }
 
 // NewStage executes the primary logic for the NewStage operation.
 // It ensures thread-safe execution, input validation, and proper error handling.
-func NewStage(recorder DecisionRecorder, knn KNNClassifier) *Stage {
+func NewStage(recorder DecisionRecorder, knn KNNClassifier, shadow ...ShadowCallback) *Stage {
+	var shadowFn ShadowCallback
+	if len(shadow) > 0 {
+		shadowFn = shadow[0]
+	}
 	return &Stage{
 		classifier: NewRuleClassifier(),
 		knn:        knn,
 		recorder:   recorder,
+		shadow:     shadowFn,
 		nowFn:      time.Now,
 	}
 }
@@ -85,6 +109,7 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	c.Values["routing.decision"] = string(class.Decision)
 	c.Values["routing.reason"] = string(class.Reason)
 	c.Values["routing.score"] = score
+	c.Header.Set("X-ProofGate-Route-Decision", string(class.Decision)+"; "+string(class.Reason))
 
 	if cfg.Mode == "on" {
 		var targetStr string
@@ -105,7 +130,7 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 // It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
 	decision, ok := c.Values["routing.decision"].(string)
-	if !ok || decision == "" || s.recorder == nil || c.Route == nil {
+	if !ok || decision == "" || c.Route == nil || strings.HasPrefix(c.CacheStatus, "hit-") {
 		return
 	}
 
@@ -130,5 +155,39 @@ func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
 		CounterfactualMicros: counterfactualMicros,
 	}
 
-	s.recorder.EmitDecision(d)
+	if s.recorder != nil {
+		s.recorder.EmitDecision(d)
+	}
+
+	// A quality shadow requires explicit tenant consent, the live answer, and a configured smart route.
+	// The callback performs the counterfactual call asynchronously so proof
+	// collection cannot add latency to the client response.
+	if s.shadow == nil || !c.Principal.Tenant.ShadowConsent || c.Err != nil || c.Response == nil || len(c.Response.Choices) == 0 ||
+		c.Route.SmartRoute.Mode != "on" {
+		return
+	}
+	answer := c.Response.Choices[0].Message.Content.PlainText()
+	if answer == "" {
+		return
+	}
+	cheapTarget := c.Route.SmartRoute.CheapTarget
+	strongTarget := c.Route.SmartRoute.StrongTarget
+	if cheapTarget == "" || strongTarget == "" {
+		return
+	}
+	task := proof.RoutingShadowTask{
+		TenantID:     c.Principal.TenantID,
+		Route:        c.Route.Name,
+		Decision:     decision,
+		CheapTarget:  cheapTarget,
+		StrongTarget: strongTarget,
+		Prompt:       PromptText(c.Request),
+		JudgeModel:   "",
+	}
+	if decision == string(DecisionCheap) {
+		task.CheapAnswer = answer
+	} else {
+		task.StrongAnswer = answer
+	}
+	s.shadow(context.WithoutCancel(ctx), task, c.Request.Clone())
 }

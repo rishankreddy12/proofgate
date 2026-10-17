@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -166,11 +167,34 @@ func (s *Store) KeyByHash(ctx context.Context, hash []byte) (KeyRecord, error) {
 
 // RevokeKey logically marks an API key as inactive. Subsequent authentication attempts will fail.
 func (s *Store) RevokeKey(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE api_keys SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL`, id)
-	if err == nil && tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
+	_, err := s.RevokeKeyWithHash(ctx, id)
 	return err
+}
+
+// RevokeKeyWithHash atomically revokes an API key and returns its stored digest.
+// The digest is intended for cache invalidation events; the plaintext key is
+// never available to or returned by the store.
+func (s *Store) RevokeKeyWithHash(ctx context.Context, id string) ([]byte, error) {
+	var hash []byte
+	err := s.pool.QueryRow(ctx, `UPDATE api_keys SET revoked_at=now()
+		WHERE id=$1 AND revoked_at IS NULL RETURNING hash`, id).Scan(&hash)
+	return hash, notFound(err)
+}
+
+// RevokeKeyAndPublish revokes a key and invokes the caller's control-bus
+// publisher with only its digest. A publisher error is returned after the
+// database commit so callers can report remote-cache invalidation as partial.
+func (s *Store) RevokeKeyAndPublish(ctx context.Context, id string, publish func(context.Context, []byte) error) error {
+	hash, err := s.RevokeKeyWithHash(ctx, id)
+	if err != nil {
+		return err
+	}
+	if publish != nil {
+		if err := publish(ctx, hash); err != nil {
+			return fmt.Errorf("key revoked but invalidation publish failed: %w", err)
+		}
+	}
+	return nil
 }
 
 // ListKeys enumerates all API keys associated with a specific tenant.

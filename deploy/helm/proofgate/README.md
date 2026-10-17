@@ -14,6 +14,7 @@ The default configuration strictly complies with the Kubernetes **Restricted** P
 - Dual health probes:
   - Startup & Liveness: `/healthz` on client port `8080`
   - Readiness: `/readyz` on isolated admin port `9090` (checks Postgres and Redis before routing traffic)
+  - Probe requests have a two-second timeout; liveness is process-only while readiness is dependency-aware.
 
 ---
 

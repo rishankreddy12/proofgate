@@ -113,33 +113,71 @@ Visit the provisioned Grafana dashboard:
   - Exact and semantic cache hit rates.
   - Hedged request win/loss ratios.
 
+The Compose gateway's authenticated admin API is available at
+`http://127.0.0.1:19090` (gateway-2 uses `19091`, gateway-3 uses `19092`).
+The data plane remains at `http://127.0.0.1:18080` for gateway-1. These are
+Compose host ports; a standalone binary with no explicit deployment config
+continues to use its loopback admin default at `127.0.0.1:9090`.
+
 ---
 
 ## 4. Add a Real Provider (Zero-Trust Key Management)
 
 ProofGate never accepts provider API keys in plain text CLI arguments or shell history. Secrets are sealed directly into PostgreSQL with AES-256-GCM envelope encryption:
 
-```bash
-# Store your OpenAI key securely via stdin:
-echo "sk-proj-YOUR_ACTUAL_OPENAI_KEY" | go run ./cmd/proofgatectl provider-key set --provider openai
+First bootstrap and log in to the authenticated admin API as described in
+[Remote Control-Plane & Admin CLI](#6-remote-control-plane--admin-cli). Then
+configure the provider to use the database credential source:
 
-# Store your Anthropic key:
-echo "sk-ant-YOUR_ACTUAL_ANTHROPIC_KEY" | go run ./cmd/proofgatectl provider-key set --provider anthropic
+```bash
+# The key is read from stdin and sent to the authenticated control plane.
+printf '%s\n' "$OPENAI_API_KEY" | go run ./cmd/proofgatectl --profile local \
+  provider credential set --provider openai
+
+# The same flow works for Anthropic or another configured provider.
+printf '%s\n' "$ANTHROPIC_API_KEY" | go run ./cmd/proofgatectl --profile local \
+  provider credential set --provider anthropic
 ```
 
-Update `deploy/proofgate.yaml` to route to your real provider:
+Update the provider and route definitions in `deploy/proofgate.yaml` (or your
+deployment's equivalent). `api_key_db: true` is required for the running
+gateway to resolve the sealed credential:
+
 ```yaml
+providers:
+  - name: openai
+    type: openai
+    base_url: "https://api.openai.com/v1"
+    api_key_db: true
+
 routes:
   - name: production
     targets:
       - provider: openai
         model: gpt-4o-mini
+
+  # Real embedding target used by semantic cache routes.
+  - name: embed-real
+    embeddings: true
+    targets:
+      - provider: openai
+        model: text-embedding-3-small
+
+pricing:
+  openai/gpt-4o-mini: {input: 0.15, output: 0.60}
+  openai/text-embedding-3-small: {input: 0.02, output: 0.00}
 ```
 
-Reload the gateway configuration without restarting:
+Point every semantic-cache route at `embedding_route: embed-real`, then
+reload the gateway configuration without restarting:
+
 ```bash
-curl -X POST http://localhost:9090/admin/reload
+go run ./cmd/proofgatectl --profile local config reload
 ```
+
+The source-resolution code already supports `api_key_db`; the deployment
+integrator must wire the provider's database key resolver and ensure the
+configured KEK and PostgreSQL schema are available to the gateway.
 
 ---
 
@@ -206,14 +244,20 @@ admin_auth:
 
 Create the initial administrator directly on the server:
 ```bash
-go run ./cmd/proofgatectl bootstrap-admin --username admin
+# Compose publishes PostgreSQL on 15432. Use the actual DSN for a standalone
+# deployment instead.
+DATABASE_URL='postgres://proofgate:proofgate@127.0.0.1:15432/proofgate?sslmode=disable' \
+  go run ./cmd/proofgatectl bootstrap-admin --username admin
 ```
+
+`bootstrap-admin` is intentionally a direct-database one-time operation and
+is allowed only while no admin users exist.
 
 ### 6.3 Log In & Manage
 
 Configure the profile and authenticate:
 ```bash
-go run ./cmd/proofgatectl profile add --name local --server http://localhost:9090
+go run ./cmd/proofgatectl profile add --name local --server http://127.0.0.1:19090
 go run ./cmd/proofgatectl profile use --name local
 go run ./cmd/proofgatectl login
 
@@ -222,6 +266,13 @@ go run ./cmd/proofgatectl status
 go run ./cmd/proofgatectl provider list
 go run ./cmd/proofgatectl health
 ```
+
+For a standalone process using the default loopback admin binding, use
+`http://127.0.0.1:9090` instead. The login endpoint is
+`POST /admin/auth/login`; all control-plane commands use the saved bearer
+session, while OpenAI-compatible traffic uses the data-plane URL
+`http://127.0.0.1:18080/v1` in Compose (or `http://127.0.0.1:8080/v1` for a
+standalone process).
 
 See the full [Admin CLI & Control-Plane Guide](admin-cli.md) for complete command documentation and RBAC configurations.
 

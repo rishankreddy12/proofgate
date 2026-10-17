@@ -58,6 +58,8 @@ services:
     ports: ["127.0.0.1:18083:8081"]
   gateway-1:
     <<: *gateway
+    # The container admin listener is bound to 0.0.0.0 by proofgate.yaml and
+    # remains protected by admin_auth. Host access is intentionally loopback-only.
     ports: ["127.0.0.1:18080:8080", "127.0.0.1:19090:9090"]
   gateway-2:
     <<: *gateway

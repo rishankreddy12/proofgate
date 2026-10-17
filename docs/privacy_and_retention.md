@@ -55,13 +55,29 @@ In compliance with GDPR and data privacy regulations, ProofGate provides an admi
 proofgatectl tenant purge-data <tenant_id_or_name>
 ```
 
-This command connects to ClickHouse and issues asynchronous partition mutations:
+This command coordinates the tenant-owned records in PostgreSQL and Redis and
+issues asynchronous ClickHouse mutations. It returns a component receipt and is
+idempotent: repeating it is safe. A `partial` or `unavailable` component is an
+operational failure, not a claim that erasure is complete.
+
+The PostgreSQL transaction removes the tenant's API keys, any tenant-scoped
+provider credential overrides (`<tenant-id>/<provider>`), and the tenant row.
+Global provider credentials are not tenant-owned and are intentionally retained.
+Redis removes tenant-tagged exact/semantic cache entries, cache indexes, agent
+run state, fuzzy-loop embeddings, budget counters, and tenant-scoped session
+extensions. The control bus then invalidates tenant authentication caches on all
+gateway replicas.
+
+ClickHouse receives these asynchronous mutations:
 ```sql
 ALTER TABLE usage_events DELETE WHERE tenant_id = '<id>';
 ALTER TABLE cache_shadow DELETE WHERE tenant_id = '<id>';
+ALTER TABLE cache_labels DELETE WHERE shadow_id IN (...tenant cache_shadow rows...);
 ALTER TABLE routing_shadow DELETE WHERE tenant_id = '<id>';
 ALTER TABLE routing_decisions DELETE WHERE tenant_id = '<id>';
 ALTER TABLE mcp_calls DELETE WHERE tenant_id = '<id>';
 ```
 
-This ensures complete erasure of all operational, shadow, and audit telemetry for the tenant across the cluster.
+The receipt marks ClickHouse as pending until background mutations complete. This
+ensures the request covers all operational, shadow, and audit telemetry for the
+tenant across the cluster without hiding ClickHouse's asynchronous completion model.

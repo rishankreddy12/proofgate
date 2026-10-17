@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/proofgate/proofgate/internal/api"
@@ -100,6 +101,37 @@ func (l *RedisLedger) Reserve(ctx context.Context, tenantID, month string, est, 
 		return false, 0, fmt.Errorf("unexpected reserve result length: %d", len(res))
 	}
 	return res[0] == 1, res[1], nil
+}
+
+// PurgeTenant removes all monthly budget counters for a tenant. Missing keys
+// are harmless, which makes retries idempotent.
+func (l *RedisLedger) PurgeTenant(ctx context.Context, tenantID string) (int64, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return 0, errors.New("tenant id required")
+	}
+	if l == nil || l.rdb == nil {
+		return 0, errors.New("budget store not configured")
+	}
+	var deleted int64
+	var cursor uint64
+	for {
+		keys, next, err := l.rdb.Scan(ctx, cursor, "budget:{t:"+tenantID+"}:*", 500).Result()
+		if err != nil {
+			return deleted, err
+		}
+		if len(keys) > 0 {
+			n, err := l.rdb.Unlink(ctx, keys...).Result()
+			if err != nil {
+				return deleted, err
+			}
+			deleted += n
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return deleted, nil
 }
 
 // StageOpts defines the configuration parameters for the Budget pipeline stage.
@@ -226,11 +258,13 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 			return false, api.BudgetExceeded(fmt.Sprintf("monthly budget of $%.2f reached", float64(limit)/1e6))
 		}
 		c.Values["budget.reserved"] = est
+		c.Values["budget.month"] = month
 		c.Header.Set("X-ProofGate-Budget-Remaining-USD", fmt.Sprintf("%.6f", float64(limit-spent)/1e6))
 		return false, nil
 	}
 
 	// reserve: off (legacy read-then-spend)
+	c.Values["budget.month"] = month
 	spent, err := s.l.Spent(ctx, c.Principal.TenantID, month)
 	if err != nil {
 		if c.Principal.Tenant.Strict {
@@ -250,11 +284,15 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 // It ensures thread-safe execution, input validation, and proper error handling.
 func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
 	totalCost := c.CostMicros + c.HedgeCostMicros
+	month, _ := c.Values["budget.month"].(string)
+	if month == "" {
+		month = Month(s.now())
+	}
 	reserved, hasReserved := c.Values["budget.reserved"].(int64)
 	if hasReserved {
 		delta := totalCost - reserved
 		if delta != 0 {
-			if err := s.l.Add(context.WithoutCancel(ctx), c.Principal.TenantID, Month(s.now()), delta); err != nil {
+			if err := s.l.Add(context.WithoutCancel(ctx), c.Principal.TenantID, month, delta); err != nil {
 				slog.Error("budget reconcile failed", "tenant", c.Principal.TenantID, "delta", delta, "err", err)
 			}
 		}
@@ -263,7 +301,7 @@ func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
 	if totalCost <= 0 {
 		return
 	}
-	if err := s.l.Add(context.WithoutCancel(ctx), c.Principal.TenantID, Month(s.now()), totalCost); err != nil {
+	if err := s.l.Add(context.WithoutCancel(ctx), c.Principal.TenantID, month, totalCost); err != nil {
 		slog.Error("budget charge failed", "tenant", c.Principal.TenantID, "micros", totalCost, "err", err)
 	}
 }

@@ -33,7 +33,15 @@ func (p *Pricing) CostMicros(target string, u api.Usage) (int64, bool) {
 	if cachedPrice == 0 {
 		cachedPrice = pr.Input // Fallback to standard input price if no discount specified
 	}
-	v := float64(u.PromptTokens-cached)*pr.Input + float64(cached)*cachedPrice + float64(u.CompletionTokens)*pr.Output
+	promptTokens := u.PromptTokens
+	if promptTokens < 0 {
+		promptTokens = 0
+	}
+	completionTokens := u.CompletionTokens
+	if completionTokens < 0 {
+		completionTokens = 0
+	}
+	v := float64(promptTokens-cached)*pr.Input + float64(cached)*cachedPrice + float64(completionTokens)*pr.Output
 	return int64(math.Round(v)), true
 }
 
@@ -45,6 +53,14 @@ func (p *Pricing) CostMicros(target string, u api.Usage) (int64, bool) {
 func (p *Pricing) EstimateMaxMicros(targets []string, promptTokens, maxTokens int) (int64, bool) {
 	if p == nil || len(targets) == 0 {
 		return 0, false
+	}
+	if maxTokens > 10_000_000 {
+		maxTokens = 10_000_000
+	} else if maxTokens < 0 {
+		maxTokens = 0
+	}
+	if promptTokens < 0 {
+		promptTokens = 0
 	}
 	var maxMicros int64
 	for _, target := range targets {

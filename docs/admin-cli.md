@@ -2,7 +2,7 @@
 
 `proofgatectl` is the administrative command-line interface for the ProofGate LLM gateway. It operates in two modes:
 
-1. **Remote Control-Plane Mode** (New): Connects over HTTPS to the gateway's dedicated admin interface (`127.0.0.1:9090` or reverse-proxied admin endpoint) to manage users, sessions, providers, configuration, and runtime health.
+1. **Remote Control-Plane Mode** (New): Connects over HTTPS to the gateway's dedicated admin interface (`127.0.0.1:9090` by default, Compose `127.0.0.1:19090`, or a reverse-proxied admin endpoint) to manage users, sessions, providers, configuration, and runtime health.
 2. **Direct Database Mode** (Existing): Connects directly to PostgreSQL and ClickHouse to perform initial bootstrapping, key provisioning, and offline data operations.
 
 ---
@@ -27,11 +27,12 @@ admin_auth:
 Before remote commands can be authenticated, you must create the initial administrator directly on the server machine using direct database access:
 
 ```bash
-export DATABASE_URL="postgres://pg:pg@localhost:5432/pg?sslmode=disable"
+# Compose example; use the actual database credentials and host port for your deployment.
+export DATABASE_URL="postgres://proofgate:proofgate@127.0.0.1:15432/proofgate?sslmode=disable"
 proofgatectl bootstrap-admin --username admin
 ```
 
-You will be prompted to enter and confirm a secure password (minimum 8 characters).
+You will be prompted to enter and confirm a secure password (minimum 12 characters).
 
 > **Security Note:** `bootstrap-admin` is only allowed when no administrative users exist in the database. Once created, all subsequent user management must be performed through the authenticated control-plane API.
 
@@ -40,13 +41,19 @@ You will be prompted to enter and confirm a secure password (minimum 8 character
 Add a profile pointing to the gateway's admin API endpoint:
 
 ```bash
-proofgatectl profile add --name local --server http://localhost:9090
+proofgatectl profile add --name local --server http://127.0.0.1:19090
 proofgatectl profile use --name local
 
 proofgatectl login
 ```
 
 Enter your username and password. On successful authentication, a session token is securely persisted in your user configuration directory.
+
+For a standalone process with the default loopback binding, use
+`http://127.0.0.1:9090` instead. The authenticated login URL is
+`POST /admin/auth/login`; the Compose data plane is
+`http://127.0.0.1:18080/v1` and its first gateway admin URL is
+`http://127.0.0.1:19090`.
 
 Verify your authentication:
 
@@ -174,6 +181,18 @@ Displays the real-time target tracker snapshot, provider health states, EWMA lat
 #### `proofgatectl cache purge [--route <ROUTE>] [--tenant <TENANT>]`
 Purges exact and semantic response cache entries globally or filtered by route or tenant.
 
+#### `proofgatectl key revoke --id <KEY_ID>`
+Revokes an API key and publishes a digest-only invalidation event so every gateway
+replica evicts its positive authentication cache immediately. Direct database mode
+requires the configured Redis URL; remote mode uses `POST /admin/cp/keys/{id}/revoke`.
+
+#### `proofgatectl tenant purge-data <TENANT_ID_OR_NAME>`
+Runs idempotent tenant erasure across PostgreSQL, Redis, and ClickHouse, then
+publishes tenant-cache invalidation to the cluster. The command prints a component
+receipt; a partial/unavailable component exits nonzero rather than reporting false
+completion. Direct database mode accepts a tenant name or ID and requires PostgreSQL,
+Redis, and ClickHouse URLs; remote mode requires the tenant ID.
+
 #### `proofgatectl chat [flags] [prompt]`
 Starts an interactive terminal chat session or executes a one-shot prompt with real-time streaming tokens.
 - **Interactive REPL**: Run `proofgatectl chat` without arguments to start an interactive chat session with multi-turn conversation memory. Type `exit` or `quit` to exit.
@@ -222,7 +241,7 @@ ProofGate enforces three administrative tiers:
 
 | Permission | `admin` | `operator` | `viewer` | Description |
 |------------|:-------:|:----------:|:--------:|-------------|
-| `user:manage` | ✅ | ❌ | ❌ | Create, modify, disable, and delete admin users |
+| `user:manage` | ✅ | ❌ | ❌ | Manage admin users, revoke API keys, and erase tenant data |
 | `provider:manage` | ✅ | ✅ | ❌ | Set credentials, test provider connectivity |
 | `config:reload` | ✅ | ✅ | ❌ | Trigger atomic configuration reloads |
 | `config:view` | ✅ | ✅ | ✅ | Inspect running redacted configuration & providers |
@@ -236,7 +255,7 @@ ProofGate enforces three administrative tiers:
 ## 4. Security Considerations & Threat Mitigations
 
 1. **Transport Security**:
-   - The admin port (`9090`) should be bound to `127.0.0.1` or routed through a secure internal ingress/VPN with TLS enabled.
+    - The admin port (`9090`) should be bound to `127.0.0.1` or routed through a secure internal ingress/VPN with TLS enabled. The Compose example binds inside the container for host access but publishes only loopback host ports and keeps `admin_auth.enabled: true`.
    - When using `--insecure` for development, `proofgatectl` prints a security warning to stderr.
 2. **Session Storage & Hashing**:
    - Plaintext session tokens are never stored in the database or Redis. Redis holds only the SHA-256 hash `proofgate:session:<hash>`.

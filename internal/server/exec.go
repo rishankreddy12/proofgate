@@ -243,5 +243,8 @@ func (h *Handlers) execChat(ctx context.Context, rt *Runtime, c *pipeline.Call) 
 
 	// Finalize post-generation telemetry and accounting
 	price(rt, c, text)
+	if c.Err != nil {
+		return c.Err
+	}
 	return nil
 }

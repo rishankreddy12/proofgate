@@ -74,10 +74,13 @@ func (s *StreamRestorer) Process(chunk string) string {
 		token := s.buffer[:closeIdx+1]
 		if original, ok := s.mapping[token]; ok {
 			out.WriteString(original)
+			s.buffer = s.buffer[closeIdx+1:]
 		} else {
-			out.WriteString(token)
+			// Non-matching: emit just the '<' and rescan from after it
+			out.WriteString("<")
+			s.buffer = s.buffer[1:]
+			continue
 		}
-		s.buffer = s.buffer[closeIdx+1:]
 	}
 
 	return out.String()

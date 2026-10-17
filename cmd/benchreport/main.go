@@ -148,7 +148,7 @@ func renderBenchmarksDoc(results map[string]any) (string, error) {
 func main() {
 	resultsDir := flag.String("results", "bench/results", "path to results directory")
 	outDoc := flag.String("out", "docs/benchmarks.md", "output path for benchmarks markdown")
-	templates := flag.String("templates", "README.md.tmpl,blog/*.md.tmpl", "comma-separated glob patterns for templates")
+	templates := flag.String("templates", "blog/*.md.tmpl", "comma-separated glob patterns for templates")
 	check := flag.Bool("check", false, "verify rendered output matches disk and fail on drift/missing markers")
 	flag.Parse()
 

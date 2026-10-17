@@ -18,3 +18,11 @@ deploy/docker-compose.local.yml
 *.swp
 *.swo
 *~
+
+# Tests are maintained outside this source distribution.
+*_test.go
+e2e/
+scripts/tests/
+scripts/*test*.sh
+**/tests/
+**/testdata/

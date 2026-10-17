@@ -138,9 +138,14 @@ func sanitizeIncoming(h http.Header) http.Header {
 // 6. Executes post-flight pipeline stages (Telemetry, Ledger).
 func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	rt := h.State.Load()
+	pipe := h.pipelineFor(rt)
 	p, _ := auth.FromContext(r.Context())
 
-	req, err := decodeChat(r, h.maxBody())
+	maxBody := h.maxBody()
+	if rt != nil && rt.Config != nil && rt.Config.Server.MaxRequestBodyBytes > 0 {
+		maxBody = rt.Config.Server.MaxRequestBodyBytes
+	}
+	req, err := decodeChat(r, maxBody)
 	if err != nil {
 		api.WriteError(w, err)
 		return
@@ -161,7 +166,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Execute Pipeline Before-Stage (e.g., semantic cache hit)
-	handled, err := h.Pipeline.Before(ctx, c)
+	handled, err := pipe.Before(ctx, c)
 
 	if err == nil && req.Stream {
 		// Hand off to the streaming responder
@@ -174,19 +179,23 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		err = upstreamError(h.execChat(ctx, rt, c))
 		if err == nil && ctx.Err() != nil {
 			c.Err = ctx.Err() // client disconnected prematurely
-			h.Pipeline.After(ctx, c)
+			pipe.After(ctx, c)
 			return
 		}
 	}
 
-	c.Err = err
+	if err == nil && c.Err != nil {
+		err = c.Err
+	} else {
+		c.Err = err
+	}
 	c.Latency = time.Since(c.Start)
 
 	writeCallHeaders(w, c)
 	if err != nil {
 		api.WriteError(w, err)
 	} else {
-		h.Pipeline.Respond(ctx, c) // Execute Pipeline Respond-Stage
+		pipe.Respond(ctx, c) // Execute Pipeline Respond-Stage
 		respToWrite := c.Response
 		if c.ClientResponse != nil {
 			respToWrite = c.ClientResponse
@@ -196,5 +205,12 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Execute Pipeline After-Stage (e.g., write-behind cache, analytics emission)
-	h.Pipeline.After(ctx, c)
+	pipe.After(ctx, c)
+}
+
+func (h *Handlers) pipelineFor(rt *Runtime) *pipeline.Pipeline {
+	if rt != nil && rt.Pipeline != nil {
+		return rt.Pipeline
+	}
+	return h.Pipeline
 }

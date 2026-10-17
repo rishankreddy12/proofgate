@@ -21,6 +21,7 @@ type AnthropicConfig struct {
 	BaseURL          string // https://api.anthropic.com
 	APIKey           string
 	KeyFunc          KeyFunc
+	Headers          map[string]string
 	MaxResponseBytes int64
 }
 
@@ -236,6 +237,9 @@ func (p *Anthropic) post(ctx context.Context, body anthropicRequest) (*http.Resp
 		req.Header.Set("x-api-key", key)
 	}
 	req.Header.Set("anthropic-version", "2023-06-01")
+	for k, v := range p.cfg.Headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, netError(ctx, p.cfg.Name, err)

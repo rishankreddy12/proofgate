@@ -3,6 +3,9 @@ package agentrun
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/proofgate/proofgate/internal/store"
 	"github.com/redis/go-redis/v9"
@@ -114,4 +117,42 @@ func (s *RedisStore) Charge(ctx context.Context, tenantID, runID string, p store
 	pipe.PExpire(ctx, rk, p.TTL)
 	_, err := pipe.Exec(ctx)
 	return err
+}
+
+// PurgeTenant removes run counters, fingerprint history, and fuzzy-loop
+// embeddings for a tenant. It is idempotent: missing keys are successful.
+func (s *RedisStore) PurgeTenant(ctx context.Context, tenantID string) (int64, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return 0, errors.New("tenant id required")
+	}
+	if s == nil || s.rdb == nil {
+		return 0, errors.New("run store not configured")
+	}
+	patterns := []string{
+		"run:{t:%s}:*",
+		"runfp:{t:%s}:*",
+		"runemb:{t:%s}:*",
+	}
+	var deleted int64
+	for _, pattern := range patterns {
+		var cursor uint64
+		for {
+			keys, next, err := s.rdb.Scan(ctx, cursor, fmt.Sprintf(pattern, tenantID), 500).Result()
+			if err != nil {
+				return deleted, err
+			}
+			if len(keys) > 0 {
+				n, err := s.rdb.Unlink(ctx, keys...).Result()
+				if err != nil {
+					return deleted, err
+				}
+				deleted += n
+			}
+			cursor = next
+			if cursor == 0 {
+				break
+			}
+		}
+	}
+	return deleted, nil
 }

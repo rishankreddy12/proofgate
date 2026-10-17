@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"net"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"github.com/proofgate/proofgate/internal/api"
 	"github.com/proofgate/proofgate/internal/auth"
 	"github.com/proofgate/proofgate/internal/config"
+	"github.com/proofgate/proofgate/internal/control"
+	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/proofgate/proofgate/internal/secrets"
 	"github.com/proofgate/proofgate/internal/store"
 	"github.com/proofgate/proofgate/internal/telemetry"
@@ -55,6 +58,8 @@ type ControlPlaneDeps struct {
 	PublishControl func(ctx context.Context, op string, args map[string]string) error
 	KEK            secrets.KEK
 	KeyCache       *secrets.KeyCache
+	AuthMiddleware *auth.Middleware
+	TenantEraser   *store.TenantEraser
 	HealthAdmin    http.HandlerFunc
 	ChatHandler    http.HandlerFunc
 	Handlers       *Handlers
@@ -86,6 +91,26 @@ func isPgUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return true
+	}
+	return false
+}
+
+func providerDatabaseCredentialsEnabled(state *State, name string) bool {
+	name = strings.TrimSpace(name)
+	if i := strings.IndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	if state == nil {
+		return false
+	}
+	active := state.Load()
+	if active == nil || active.Config == nil {
+		return false
+	}
+	for _, spec := range active.Config.Providers {
+		if spec.Name == name {
+			return spec.APIKeyDB
+		}
 	}
 	return false
 }
@@ -281,21 +306,13 @@ func (deps *ControlPlaneDeps) handleTestProvider(w http.ResponseWriter, r *http.
 		Messages:  []api.Message{{Role: "user", Content: api.Content{Text: "ping"}}},
 	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"provider": name,
-			"status":   "error",
-			"error":    err.Error(),
-		})
+		writeProviderProbeFailure(w, name, err)
 		return
 	}
 	defer stream.Close()
 
 	if _, err := stream.Recv(); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"provider": name,
-			"status":   "error",
-			"error":    err.Error(),
-		})
+		writeProviderProbeFailure(w, name, err)
 		return
 	}
 
@@ -304,6 +321,58 @@ func (deps *ControlPlaneDeps) handleTestProvider(w http.ResponseWriter, r *http.
 		"provider":   name,
 		"status":     "ok",
 		"latency_ms": latency,
+	})
+}
+
+// writeProviderProbeFailure turns an upstream probe error into a non-successful,
+// structured response. Provider adapters may include upstream response bodies,
+// URLs, or transport details in their internal error strings; none of that is
+// safe to expose from the control plane. Only the status classification and a
+// stable, redacted message are returned.
+func writeProviderProbeFailure(w http.ResponseWriter, name string, err error) {
+	status := http.StatusBadGateway
+	code := "provider_probe_failed"
+	message := "provider probe failed"
+	upstreamStatus := 0
+
+	var providerErr *provider.Error
+	switch {
+	case errors.As(err, &providerErr):
+		upstreamStatus = providerErr.Status
+		if providerErr.Status >= http.StatusBadRequest && providerErr.Status < 600 {
+			status = providerErr.Status
+		}
+		switch {
+		case providerErr.Status == http.StatusUnauthorized || providerErr.Status == http.StatusForbidden:
+			code = "provider_auth_failed"
+			message = "provider authentication failed"
+		case providerErr.Status == http.StatusTooManyRequests:
+			code = "provider_rate_limited"
+			message = "provider rate limited"
+		case providerErr.Status >= 500:
+			code = "provider_upstream_error"
+			message = "provider returned an upstream error"
+		case providerErr.Status >= 400:
+			code = "provider_rejected_probe"
+			message = "provider rejected the probe"
+		}
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusGatewayTimeout
+		code = "provider_probe_timeout"
+		message = "provider probe timed out"
+	}
+
+	details := map[string]any{
+		"code":    code,
+		"message": message,
+	}
+	if upstreamStatus > 0 {
+		details["upstream_status"] = upstreamStatus
+	}
+	writeJSON(w, status, map[string]any{
+		"provider": name,
+		"status":   "error",
+		"error":    details,
 	})
 }
 
@@ -317,6 +386,18 @@ func (deps *ControlPlaneDeps) handleSetCredential(w http.ResponseWriter, r *http
 	name := r.PathValue("name")
 	sess := adminauth.GetAdminPrincipal(r.Context())
 	ip := deps.clientIP(r)
+
+	// Storing a credential is only useful when the active runtime is wired to
+	// resolve that provider from the encrypted database source. Rejecting an
+	// env-backed or unknown provider here avoids a false-success onboarding flow
+	// where the secret is encrypted successfully but never used by requests.
+	if !providerDatabaseCredentialsEnabled(deps.State, name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":   "provider_database_credentials_disabled",
+			"message": "provider must be configured with api_key_db: true before credentials can be provisioned",
+		})
+		return
+	}
 
 	var req SetCredentialRequest
 	if err := decodeJSON(w, r, &req); err != nil {
@@ -365,7 +446,25 @@ func (deps *ControlPlaneDeps) handleSetCredential(w http.ResponseWriter, r *http
 	}
 
 	if deps.KeyCache != nil {
-		deps.KeyCache.Purge()
+		deps.KeyCache.PurgeProvider(name)
+	}
+
+	if deps.PublishControl != nil {
+		if err := deps.PublishControl(r.Context(), control.OpCredentialInvalidated,
+			control.CredentialInvalidatedArgs(name, version)); err != nil {
+			// The credential is committed and this replica is safe, but remote
+			// replicas may still hold the old value. Make that partial state
+			// explicit instead of returning a false all-clear.
+			_ = deps.Store.RecordAdminAudit(r.Context(), actor, "provider.credential.set", name,
+				map[string]any{"version": version, "control_publish": "failed"}, ip, "partial")
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"provider": name,
+				"version":  version,
+				"status":   "stored_local_invalidation_pending",
+				"error":    "credential stored but replica invalidation could not be published",
+			})
+			return
+		}
 	}
 
 	_ = deps.Store.RecordAdminAudit(r.Context(), actor, "provider.credential.set", name, map[string]any{"version": version}, ip, "ok")
@@ -373,6 +472,85 @@ func (deps *ControlPlaneDeps) handleSetCredential(w http.ResponseWriter, r *http
 		"provider": name,
 		"version":  version,
 	})
+}
+
+type apiKeyRevocationStore interface {
+	RevokeKeyWithHash(context.Context, string) ([]byte, error)
+}
+
+func (deps *ControlPlaneDeps) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	storeWithRevocation, ok := deps.Store.(apiKeyRevocationStore)
+	if !ok {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "key revocation store unavailable"})
+		return
+	}
+	hash, err := storeWithRevocation.RevokeKeyWithHash(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found", "message": "API key not found or already revoked"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error", "message": "failed to revoke API key"})
+		return
+	}
+
+	keyHash := hex.EncodeToString(hash)
+	if deps.AuthMiddleware != nil {
+		deps.AuthMiddleware.EvictKey(keyHash)
+	}
+	sess := adminauth.GetAdminPrincipal(r.Context())
+	actor := "admin"
+	if sess != nil && sess.Username != "" {
+		actor = sess.Username
+	}
+	if deps.PublishControl != nil {
+		if err := deps.PublishControl(r.Context(), control.OpKeyRevoked, control.KeyRevokedArgs(hash)); err != nil {
+			if deps.Store != nil {
+				_ = deps.Store.RecordAdminAudit(r.Context(), actor, "key.revoke", id, nil, deps.clientIP(r), "partial")
+			}
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error":   "partial",
+				"message": "API key revoked locally but replica invalidation could not be published",
+			})
+			return
+		}
+	}
+	if deps.Store != nil {
+		_ = deps.Store.RecordAdminAudit(r.Context(), actor, "key.revoke", id, nil, deps.clientIP(r), "ok")
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked", "key_id": id})
+}
+
+func (deps *ControlPlaneDeps) handleTenantErase(w http.ResponseWriter, r *http.Request) {
+	tenantID := strings.TrimSpace(r.PathValue("id"))
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": "tenant id is required"})
+		return
+	}
+	if deps.TenantEraser == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "erasure_unavailable", "message": "tenant erasure is not configured"})
+		return
+	}
+	receipt := deps.TenantEraser.Erase(r.Context(), tenantID)
+	if deps.AuthMiddleware != nil {
+		deps.AuthMiddleware.EvictTenant(tenantID)
+	}
+	// Publish cache invalidation even for a partial store receipt. Evicting a
+	// local positive auth entry is safe when a backend is unavailable: the next
+	// request re-checks the authoritative store instead of retaining access.
+	if deps.PublishControl != nil {
+		if err := deps.PublishControl(r.Context(), control.OpTenantErased,
+			control.TenantErasedArgs(tenantID, receipt.ID)); err != nil {
+			receipt.Status = "partial"
+			receipt.Components["control_bus"] = store.TenantEraseComponent{Status: "failed", Error: "tenant cache invalidation could not be published"}
+		}
+	}
+	status := http.StatusOK
+	if receipt.Status == "partial" {
+		status = http.StatusMultiStatus
+	}
+	writeJSON(w, status, receipt)
 }
 
 func (deps *ControlPlaneDeps) handleListCredentials(w http.ResponseWriter, r *http.Request) {
@@ -820,6 +998,12 @@ func RegisterAdminRoutes(admin *http.ServeMux, deps *ControlPlaneDeps, authEnabl
 	admin.Handle("POST /admin/cp/providers/{name}/test", wrapPerm(adminauth.PermProviderManage, deps.handleTestProvider))
 	admin.Handle("POST /admin/cp/providers/{name}/credential", wrapPerm(adminauth.PermProviderManage, deps.handleSetCredential))
 	admin.Handle("GET /admin/cp/providers/credentials", wrapPerm(adminauth.PermProviderManage, deps.handleListCredentials))
+
+	// Destructive tenant/key invalidation is restricted to administrators using
+	// the existing admin-only user-management permission until a dedicated
+	// tenant-management permission is added by the control-plane owner.
+	admin.Handle("POST /admin/cp/keys/{id}/revoke", wrapPerm(adminauth.PermUserManage, deps.handleRevokeKey))
+	admin.Handle("POST /admin/cp/tenants/{id}/erase", wrapPerm(adminauth.PermUserManage, deps.handleTenantErase))
 
 	// Sessions
 	admin.Handle("GET /admin/cp/sessions", wrapPerm(adminauth.PermSessionManage, deps.handleListSessions))

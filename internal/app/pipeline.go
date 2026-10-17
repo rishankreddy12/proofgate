@@ -12,7 +12,9 @@ import (
 	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/guard"
 	"github.com/proofgate/proofgate/internal/pipeline"
+	"github.com/proofgate/proofgate/internal/proof"
 	"github.com/proofgate/proofgate/internal/ratelimit"
+	"github.com/proofgate/proofgate/internal/smartroute"
 	"github.com/proofgate/proofgate/internal/telemetry"
 )
 
@@ -32,6 +34,9 @@ type Deps struct {
 	Pricing           *budget.Pricing
 	BudgetCfg         config.BudgetConfig
 	BudgetFailOpenInc func()
+	DecisionEmit      func(proof.RoutingDecision) bool
+	KNN               smartroute.KNNClassifier
+	RoutingShadow     smartroute.ShadowCallback
 }
 
 // StageOrder defines the canonical pipeline stage names in execution order.
@@ -43,6 +48,7 @@ var StageOrder = []string{
 	"usage",
 	"agentrun",
 	"ratelimit",
+	"smartroute",
 	"budget",
 	"guard",
 	"cache",
@@ -57,6 +63,11 @@ func BuildPipeline(d Deps) *pipeline.Pipeline {
 		analytics.UsageStage(d.UsageEmit),
 		agentrun.NewStageWithLimiter(d.Runs, d.DefaultMaxToks, d.Limiter, d.FuzzyDetector),
 		ratelimit.NewStage(d.Limiter, d.MaxTokReserve, d.DefaultMaxToks, d.FailOpenInc),
+		smartroute.NewStage(smartroute.DecisionRecorderFunc(func(dec proof.RoutingDecision) {
+			if d.DecisionEmit != nil {
+				d.DecisionEmit(dec)
+			}
+		}), d.KNN, d.RoutingShadow),
 		budget.NewStage(d.Ledger, time.Now, budget.StageOpts{
 			Pricing:        d.Pricing,
 			ReserveStrict:  d.BudgetCfg.IsReserveStrict(),

@@ -26,9 +26,10 @@ import (
 type Gossip struct {
 	addr     string
 	peers    []string
-	tracker  *Tracker
-	interval time.Duration
-	secret   string
+	tracker       *Tracker
+	interval      time.Duration
+	secret        string
+	allowUnsigned bool
 
 	mu      sync.Mutex
 	conn    *net.UDPConn
@@ -42,7 +43,9 @@ type Gossip struct {
 
 // NewGossip creates a new cross-replica gossip instance without authentication.
 func NewGossip(addr string, peers []string, tracker *Tracker, interval time.Duration) *Gossip {
-	return NewGossipWithSecret(addr, peers, tracker, interval, "")
+	g := NewGossipWithSecret(addr, peers, tracker, interval, "")
+	g.allowUnsigned = true
+	return g
 }
 
 // NewGossipWithSecret creates a cross-replica gossip instance secured with HMAC-SHA256.
@@ -51,14 +54,20 @@ func NewGossipWithSecret(addr string, peers []string, tracker *Tracker, interval
 		interval = 10 * time.Second
 	}
 	return &Gossip{
-		addr:     addr,
-		peers:    peers,
-		tracker:  tracker,
-		interval: interval,
-		secret:   secret,
-		stop:     make(chan struct{}),
-		limiters: make(map[string]*rate.Limiter),
+		addr:          addr,
+		peers:         peers,
+		tracker:       tracker,
+		interval:      interval,
+		secret:        secret,
+		allowUnsigned: false,
+		stop:          make(chan struct{}),
+		limiters:      make(map[string]*rate.Limiter),
 	}
+}
+
+// SetAllowUnsigned explicitly controls whether unsigned gossip packets are accepted when secret is empty.
+func (g *Gossip) SetAllowUnsigned(allow bool) {
+	g.allowUnsigned = allow
 }
 
 // AddPeer dynamically adds a peer address to the gossip group (useful for testing or dynamic discovery).
@@ -334,9 +343,14 @@ func (g *Gossip) MergeMessage(data []byte) error {
 			return errors.New("gossip: invalid packet signature")
 		}
 		raw = raw[nlIdx+1:]
-	} else if bytes.HasPrefix(raw, []byte("SIG|")) {
-		if nlIdx := bytes.IndexByte(raw, '\n'); nlIdx >= 0 {
-			raw = raw[nlIdx+1:]
+	} else {
+		if !g.allowUnsigned {
+			return errors.New("gossip: unsigned packet rejected (secret required)")
+		}
+		if bytes.HasPrefix(raw, []byte("SIG|")) {
+			if nlIdx := bytes.IndexByte(raw, '\n'); nlIdx >= 0 {
+				raw = raw[nlIdx+1:]
+			}
 		}
 	}
 

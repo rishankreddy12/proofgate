@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,15 +73,16 @@ const StateKey = "cache.state"
 // 1. Before(): Generates determinist keys and queries Exact/Semantic stores. On a hit, it synthetically injects the cached response into the pipeline, bypassing all upstream targets.
 // 2. After(): Intercepts successful, completed LLM generations and asynchronously persists them back to the Redis stores.
 type Stage struct {
-	exact    ExactStore
-	sem      SemanticStore
-	emb      Embedder
-	now      func() time.Time
-	slots    chan struct{}
-	wg       sync.WaitGroup
-	onErr    func(op string)
-	onDrop   func()
-	onShadow func(ShadowRecord)
+	exact                 ExactStore
+	sem                   SemanticStore
+	emb                   Embedder
+	now                   func() time.Time
+	slots                 chan struct{}
+	wg                    sync.WaitGroup
+	onErr                 func(op string)
+	onDrop                func()
+	onShadow              func(ShadowRecord)
+	shadowConsentRequired atomic.Bool
 }
 
 // NewStage initializes the pipeline cache plugin with its constituent storage drivers.
@@ -111,6 +113,11 @@ func (s *Stage) SetOnShadow(fn func(ShadowRecord)) {
 	}
 	s.onShadow = fn
 }
+
+// SetShadowConsentRequired gates persistence of shadow evidence on the
+// authenticated tenant policy. It is a deployment-level control; normal
+// cache operation is unaffected when it is disabled.
+func (s *Stage) SetShadowConsentRequired(required bool) { s.shadowConsentRequired.Store(required) }
 
 // Name executes the primary logic for the Name operation.
 // It ensures thread-safe execution, input validation, and proper error handling.
@@ -247,21 +254,23 @@ func (s *Stage) After(_ context.Context, c *pipeline.Call) {
 	if !ok || c.Err != nil {
 		return
 	}
-	if st.Candidate != nil && c.Response != nil && len(c.Response.Choices) > 0 && s.onShadow != nil {
+	if st.Candidate != nil && c.Response != nil && len(c.Response.Choices) > 0 && s.onShadow != nil &&
+		(!s.shadowConsentRequired.Load() || c.Principal.Tenant.ShadowConsent) {
 		actual := c.Response.Choices[0].Message.Content.PlainText()
-		s.onShadow(ShadowRecord{
-			ID:              uuid.NewString(),
-			TS:              s.now(),
-			TenantID:        c.Principal.TenantID,
-			Route:           c.Route.Name,
-			Threshold:       c.Route.Cache.Threshold,
-			Similarity:      st.Candidate.Similarity,
-			Query:           st.Candidate.Query,
-			CandidateQuery:  st.Candidate.CandidateQuery,
-			CandidateAnswer: st.Candidate.CandidateAnswer,
-			ActualAnswer:    actual,
-			CandidateSource: st.Candidate.Source,
-		})
+		record := ShadowRecord{
+			ID:           uuid.NewString(),
+			TS:           s.now(),
+			TenantID:     c.Principal.TenantID,
+			Route:        c.Route.Name,
+			Threshold:    c.Route.Cache.Threshold,
+			ActualAnswer: actual,
+		}
+		record.Similarity = st.Candidate.Similarity
+		record.Query = st.Candidate.Query
+		record.CandidateQuery = st.Candidate.CandidateQuery
+		record.CandidateAnswer = st.Candidate.CandidateAnswer
+		record.CandidateSource = st.Candidate.Source
+		s.onShadow(record)
 	}
 	if c.CacheStatus != "miss" || !storable(c.Response) {
 		return

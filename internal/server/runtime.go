@@ -7,6 +7,7 @@ import (
 	"github.com/proofgate/proofgate/internal/budget"
 	"github.com/proofgate/proofgate/internal/config"
 	"github.com/proofgate/proofgate/internal/mcpproxy"
+	"github.com/proofgate/proofgate/internal/pipeline"
 	"github.com/proofgate/proofgate/internal/provider"
 	"github.com/proofgate/proofgate/internal/router"
 )
@@ -26,6 +27,10 @@ type Runtime struct {
 	Registry *provider.Registry
 	Pricing  *budget.Pricing
 	MCP      map[string]mcpproxy.Upstream
+	// Pipeline is the pipeline snapshot built for this runtime. Keeping it in
+	// the same atomic state as pricing and routing prevents a request from
+	// mixing old budget stages with a newly reloaded runtime.
+	Pipeline *pipeline.Pipeline
 }
 
 // ResolveMCP translates the declarative MCP server YAML configurations into concrete

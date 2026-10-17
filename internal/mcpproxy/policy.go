@@ -9,7 +9,7 @@ import (
 
 func match(globs []string, name string) bool {
 	for _, g := range globs {
-		if ok, _ := path.Match(g, name); ok {
+		if ok, err := path.Match(g, name); err == nil && ok {
 			return true
 		}
 	}

@@ -5,11 +5,13 @@ import (
 	"context"
 	"log/slog"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/proofgate/proofgate/internal/control"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -49,6 +51,7 @@ type KeyCache struct {
 	sfg        singleflight.Group
 	mu         sync.Mutex
 	m          map[string]cached
+	epoch      uint64
 }
 
 // NewKeyCache executes the primary logic for the NewKeyCache operation.
@@ -89,8 +92,9 @@ func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 	// 1. Fast path: fresh cache hit
 	k.mu.Lock()
 	if c, ok := k.m[provider]; ok && now.Before(c.expires) {
+		val := string(c.value)
 		k.mu.Unlock()
-		return string(c.value), nil
+		return val, nil
 	}
 	k.mu.Unlock()
 
@@ -99,14 +103,21 @@ func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 		// Double check inside singleflight in case a concurrent flight loaded it
 		k.mu.Lock()
 		if c, ok := k.m[provider]; ok && k.now().Before(c.expires) {
+			val := string(c.value)
 			k.mu.Unlock()
-			return string(c.value), nil
+			return val, nil
 		}
 		k.mu.Unlock()
 
-		s, _, fetchErr := k.src.ActiveCredential(ctx, provider)
+		k.mu.Lock()
+		loadEpoch := k.epoch
+		k.mu.Unlock()
+		sfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+
+		s, _, fetchErr := k.src.ActiveCredential(sfCtx, provider)
 		if fetchErr == nil {
-			pt, openErr := Open(ctx, k.kek, s, AAD(provider))
+			pt, openErr := Open(sfCtx, k.kek, s, AAD(provider))
 			if openErr == nil {
 				v := string(pt)
 				k.onSecret(v)
@@ -119,10 +130,12 @@ func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 				stale := exp.Add(k.staleGrace)
 
 				k.mu.Lock()
-				k.m[provider] = cached{
-					value:      pt,
-					expires:    exp,
-					staleUntil: stale,
+				if k.epoch == loadEpoch {
+					k.m[provider] = cached{
+						value:      pt,
+						expires:    exp,
+						staleUntil: stale,
+					}
 				}
 				k.mu.Unlock()
 				return v, nil
@@ -133,10 +146,11 @@ func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 		// Refresh failed: fallback to stale grace if valid
 		k.mu.Lock()
 		if c, ok := k.m[provider]; ok && k.now().Before(c.staleUntil) {
+			val := string(c.value)
 			k.mu.Unlock()
 			KeycacheStaleServedTotal.WithLabelValues(provider).Inc()
 			slog.Warn("serving stale credential from keycache due to refresh error", "provider", provider, "err", fetchErr)
-			return string(c.value), nil
+			return val, nil
 		}
 		k.mu.Unlock()
 
@@ -154,8 +168,40 @@ func (k *KeyCache) Get(ctx context.Context, provider string) (string, error) {
 func (k *KeyCache) Purge() {
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	k.epoch++
 	for _, c := range k.m {
 		zero(c.value)
 	}
 	k.m = make(map[string]cached)
+}
+
+// PurgeProvider removes the cached credential for provider and any tenant
+// override using the provider suffix (tenant-id/provider). It also invalidates
+// a concurrent refresh so it cannot repopulate the old credential.
+func (k *KeyCache) PurgeProvider(provider string) {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.epoch++
+	for name, c := range k.m {
+		if name == provider || strings.HasSuffix(name, "/"+provider) {
+			zero(c.value)
+			delete(k.m, name)
+		}
+	}
+}
+
+// SubscribeControl connects provider credential invalidation to the shared
+// control bus. The event carries no credential material.
+func (k *KeyCache) SubscribeControl(bus *control.Bus) {
+	if k == nil || bus == nil {
+		return
+	}
+	bus.Subscribe(control.OpCredentialInvalidated, func(_ context.Context, msg control.Message) error {
+		k.PurgeProvider(msg.Args["provider"])
+		return nil
+	})
 }

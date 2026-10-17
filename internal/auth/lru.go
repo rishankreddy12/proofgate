@@ -139,6 +139,26 @@ func (c *LRUCache[V]) Remove(key string) {
 	}
 }
 
+// RemoveWhere synchronously removes every entry matching predicate. It is used
+// for tenant invalidation because the positive cache is indexed by API-key
+// digest, not tenant ID.
+func (c *LRUCache[V]) RemoveWhere(predicate func(string, V) bool) int {
+	if predicate == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	removed := 0
+	for key, el := range c.items {
+		item := el.Value.(*lruItem[V])
+		if predicate(key, item.val) {
+			c.evictElement(el)
+			removed++
+		}
+	}
+	return removed
+}
+
 // Purge acts as a global reset mechanism, synchronously dropping all map references
 // and re-initializing the linked list. This allows the GC to sweep all underlying structs.
 func (c *LRUCache[V]) Purge() {

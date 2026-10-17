@@ -42,7 +42,7 @@ func (h *Handlers) Routes(authMW func(http.Handler) http.Handler) http.Handler {
 	r := chi.NewRouter()
 
 	// Unauthenticated health probe
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	r.Get("/healthz", LivenessHandler)
 
 	// Authenticated OpenAI compatibility layer
 	r.Group(func(r chi.Router) {
