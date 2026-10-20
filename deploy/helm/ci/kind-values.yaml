@@ -26,6 +26,12 @@ config: |
   secrets:
     kek: local
     local_kek_file: /run/secrets/local_kek
+  database:
+    url: postgres://proofgate:proofgate@postgres:5432/proofgate?sslmode=disable
+  redis:
+    url: redis://redis:6379/0
+  analytics:
+    clickhouse_dsn: clickhouse://proofgate:proofgate@clickhouse:9000/proofgate
   providers:
     - name: mock
       type: openai
