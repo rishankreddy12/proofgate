@@ -88,7 +88,7 @@ func (s *Stage) Before(ctx context.Context, c *pipeline.Call) (bool, error) {
 	}
 
 	class := s.classifier.Classify(c.Request, cfg.MaxTokensForCheap)
-	var score float64 = 1.0
+	score := 1.0
 
 	// If uncertain and KNN enabled
 	if class.Decision == DecisionUncertain && cfg.KNNEnabled && s.knn != nil {

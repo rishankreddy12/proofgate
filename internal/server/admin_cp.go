@@ -413,7 +413,7 @@ func (deps *ControlPlaneDeps) handleSetCredential(w http.ResponseWriter, r *http
 		return
 	}
 
-	var targetKEK secrets.KEK = deps.KEK
+	targetKEK := deps.KEK
 	parts := strings.SplitN(name, "/", 2)
 	if len(parts) == 2 {
 		tenantID := parts[0]
@@ -656,7 +656,7 @@ func (deps *ControlPlaneDeps) handleCreateUser(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := adminauth.ValidatePassword(req.Password, req.Username); err != nil {
+	if err := adminauth.ValidatePasswordContext(r.Context(), req.Password, req.Username); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": err.Error()})
 		return
 	}
@@ -848,7 +848,7 @@ func (deps *ControlPlaneDeps) handleChangePassword(w http.ResponseWriter, r *htt
 		}
 	}
 
-	if err := adminauth.ValidatePassword(req.NewPassword, username); err != nil {
+	if err := adminauth.ValidatePasswordContext(r.Context(), req.NewPassword, username); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_request", "message": err.Error()})
 		return
 	}

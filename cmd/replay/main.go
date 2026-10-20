@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -58,10 +59,11 @@ func main() {
 	f.Close()
 
 	client := &http.Client{Timeout: 60 * time.Second}
+	ctx := context.Background()
 	var mu sync.Mutex
 	var results []Result
 	groups := map[string]string{}
-	run := func(ls []line) {
+	run := func(ctx context.Context, ls []line) {
 		sem := make(chan struct{}, *conc)
 		var wg sync.WaitGroup
 		for _, l := range ls {
@@ -74,11 +76,14 @@ func main() {
 					"max_tokens": 64,
 					"messages":   []map[string]string{{"role": "user", "content": l.Prompt}},
 				})
-				req, _ := http.NewRequest("POST", *url+"/v1/chat/completions", bytes.NewReader(body))
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, *url+"/v1/chat/completions", bytes.NewReader(body)) //nolint:gosec // replay target is an explicit operator-supplied endpoint
+				if err != nil {
+					return
+				}
 				req.Header.Set("Authorization", "Bearer "+*key)
 				req.Header.Set("Content-Type", "application/json")
 				start := time.Now()
-				resp, err := client.Do(req)
+				resp, err := client.Do(req) //nolint:gosec // replay target is an explicit operator-supplied endpoint
 				res := Result{Phase: l.Phase, Group: l.Group, Latency: time.Since(start)}
 				if err == nil {
 					res.Status = resp.StatusCode
@@ -97,16 +102,16 @@ func main() {
 		}
 		wg.Wait()
 	}
-	run(phases[1])
+	run(ctx, phases[1])
 	time.Sleep(*settle)
-	run(phases[2])
+	run(ctx, phases[2])
 
 	rep := Summarize(results, groups)
 	rep.Label, rep.Dataset, rep.Route, rep.Date = *label, *file, *route, time.Now().UTC().Format(time.RFC3339)
 	b, _ := json.MarshalIndent(rep, "", "  ")
 	fmt.Println(string(b))
 	if *out != "" {
-		if err := os.WriteFile(*out, append(b, '\n'), 0o644); err != nil {
+		if err := os.WriteFile(*out, append(b, '\n'), 0o600); err != nil {
 			log.Fatal(err)
 		}
 	}

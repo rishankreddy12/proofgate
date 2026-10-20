@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -37,7 +38,12 @@ func runLabelCache(ctx context.Context, route string, limit int, chURL string) {
 		}
 	}
 	if chURL == "" {
-		chURL = "clickhouse://proofgate:proofgate@127.0.0.1:19000/proofgate"
+		chURL = (&url.URL{
+			Scheme: "clickhouse",
+			User:   url.UserPassword("proofgate", "proofgate"),
+			Host:   "127.0.0.1:19000",
+			Path:   "/proofgate",
+		}).String()
 	}
 	conn, err := analytics.Open(ctx, chURL)
 	if err != nil {

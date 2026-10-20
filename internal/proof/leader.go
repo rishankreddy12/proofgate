@@ -105,6 +105,7 @@ func (l *Leader) Step(ctx context.Context) {
 // Start executes the primary logic for the Start operation.
 // It ensures thread-safe execution, input validation, and proper error handling.
 func (l *Leader) Start(ctx context.Context) {
+	cleanupCtx := context.WithoutCancel(ctx)
 	go func() {
 		defer close(l.done)
 		// Run initial attempt immediately
@@ -116,10 +117,10 @@ func (l *Leader) Start(ctx context.Context) {
 		for {
 			select {
 			case <-l.stop:
-				l.release(context.Background())
+				l.release(cleanupCtx)
 				return
 			case <-ctx.Done():
-				l.release(context.Background())
+				l.release(cleanupCtx)
 				return
 			case <-ticker.C:
 				l.Step(ctx)

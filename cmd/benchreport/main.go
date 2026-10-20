@@ -15,7 +15,13 @@ import (
 
 func loadResults(dir string) (map[string]any, error) {
 	res := make(map[string]any)
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -27,7 +33,7 @@ func loadResults(dir string) (map[string]any, error) {
 			return err
 		}
 		relKey := filepath.ToSlash(rel)
-		b, err := os.ReadFile(path)
+		b, err := root.ReadFile(rel)
 		if err != nil {
 			return err
 		}
@@ -113,9 +119,9 @@ func renderBenchmarksDoc(results map[string]any) (string, error) {
 
 	buf.WriteString("| Gateway | Version / Image | Streaming TTFT p50 | Streaming TTFT p90 | Streaming TTFT p99 | Total Latency p99 | Achieved RPS | Errors |\n")
 	buf.WriteString("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
-	buf.WriteString(fmt.Sprintf("| **ProofGate** | local-build (Go) | **%.2f ms** | **%.2f ms** | **%.2f ms** | **%.2f ms** | **%.1f** | **%d** |\n", pgP50, pgP90, pgP99, pgTot, pgRPS, int(pgErr)))
-	buf.WriteString(fmt.Sprintf("| **Bifrost** | maximhq/bifrost (Go) | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.1f | %d |\n", biP50, biP90, biP99, biTot, biRPS, int(biErr)))
-	buf.WriteString(fmt.Sprintf("| **LiteLLM** | berriai/litellm (Python) | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.1f | %d |\n\n", liteP50, liteP90, liteP99, liteTot, liteRPS, int(liteErr)))
+	fmt.Fprintf(&buf, "| **ProofGate** | local-build (Go) | **%.2f ms** | **%.2f ms** | **%.2f ms** | **%.2f ms** | **%.1f** | **%d** |\n", pgP50, pgP90, pgP99, pgTot, pgRPS, int(pgErr))
+	fmt.Fprintf(&buf, "| **Bifrost** | maximhq/bifrost (Go) | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.1f | %d |\n", biP50, biP90, biP99, biTot, biRPS, int(biErr))
+	fmt.Fprintf(&buf, "| **LiteLLM** | berriai/litellm (Python) | %.2f ms | %.2f ms | %.2f ms | %.2f ms | %.1f | %d |\n\n", liteP50, liteP90, liteP99, liteTot, liteRPS, int(liteErr))
 
 	buf.WriteString("> [!IMPORTANT]\n")
 	buf.WriteString("> **What this benchmark does NOT show:**\n")
@@ -191,7 +197,7 @@ func main() {
 		if err := os.MkdirAll(filepath.Dir(*outDoc), 0o755); err != nil {
 			log.Fatal(err)
 		}
-		if err := os.WriteFile(*outDoc, []byte(renderedDoc), 0o644); err != nil {
+		if err := os.WriteFile(*outDoc, []byte(renderedDoc), 0o600); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -219,7 +225,7 @@ func main() {
 				hasDrift = true
 			}
 		} else {
-			if err := os.WriteFile(targetFile, []byte(resolved), 0o644); err != nil {
+			if err := os.WriteFile(targetFile, []byte(resolved), 0o600); err != nil { //nolint:gosec // targetFile is an intentional generated output path from the selected template
 				log.Fatalf("write %s: %v", targetFile, err)
 			}
 		}

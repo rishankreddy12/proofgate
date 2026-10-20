@@ -74,9 +74,10 @@ func main() {
 		if err := json.Unmarshal(scanner.Bytes(), &item); err != nil {
 			continue
 		}
-		if item.Phase == 1 {
+		switch item.Phase {
+		case 1:
 			phase1 = append(phase1, item)
-		} else if item.Phase == 2 {
+		case 2:
 			phase2 = append(phase2, item)
 		}
 	}
@@ -159,7 +160,7 @@ func main() {
 		}
 		b, err := json.MarshalIndent(outData, "", "  ")
 		if err == nil {
-			_ = os.WriteFile(*outputPath, b, 0644)
+			_ = os.WriteFile(*outputPath, b, 0o600)
 			fmt.Printf("Wrote calibration curve results to %s\n", *outputPath)
 		}
 	}

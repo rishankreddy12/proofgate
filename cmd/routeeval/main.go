@@ -88,7 +88,7 @@ func main() {
 	var actualCost, counterfactualCost float64
 	var deltas []float64
 
-	rng := rand.New(rand.NewPCG(42, 100))
+	rng := rand.New(rand.NewPCG(42, 100)) //nolint:gosec // deterministic randomness is required for reproducible evaluation output
 
 	fmt.Printf("Evaluating SmartRoute Fast-Path Classifier across %d queries...\n\n", len(defaultBenchmark))
 
@@ -167,7 +167,7 @@ func main() {
 		}
 		b, err := json.MarshalIndent(res, "", "  ")
 		if err == nil {
-			_ = os.WriteFile(*outputPath, b, 0644)
+			_ = os.WriteFile(*outputPath, b, 0o600)
 			fmt.Printf("Saved routing evaluation results to %s\n", *outputPath)
 		}
 	}

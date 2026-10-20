@@ -97,7 +97,18 @@ func (p *Proxy) forward(r *http.Request, up Upstream, body []byte) (*http.Respon
 	for k, v := range up.Headers { // configured credentials; the client's Authorization is never copied
 		req.Header.Set(k, v)
 	}
-	return p.d.Client.Do(req)
+	return p.d.Client.Do(req) //nolint:gosec // URL comes from validated server configuration, not request data
+}
+
+func elapsedMillis(start time.Time) uint32 {
+	ms := time.Since(start).Milliseconds()
+	if ms <= 0 {
+		return 0
+	}
+	if ms > int64(^uint32(0)) {
+		return ^uint32(0)
+	}
+	return uint32(ms)
 }
 
 // ServeHTTP executes the primary logic for the ServeHTTP operation.
@@ -135,7 +146,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				RunID:     runID,
 				Decision:  "allowed",
 				Status:    status,
-				LatencyMs: uint32(time.Since(start).Milliseconds()),
+				LatencyMs: elapsedMillis(start),
 			})
 		})
 		return
@@ -175,7 +186,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				RunID:     runID,
 				Decision:  "denied",
 				Status:    http.StatusOK,
-				LatencyMs: uint32(time.Since(start).Milliseconds()),
+				LatencyMs: elapsedMillis(start),
 			})
 			continue
 		}
@@ -196,7 +207,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					RunID:     runID,
 					Decision:  "denied",
 					Status:    http.StatusOK,
-					LatencyMs: uint32(time.Since(start).Milliseconds()),
+					LatencyMs: elapsedMillis(start),
 				})
 				continue
 			}
@@ -215,7 +226,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						RunID:     runID,
 						Decision:  "run_limit",
 						Status:    http.StatusOK,
-						LatencyMs: uint32(time.Since(start).Milliseconds()),
+						LatencyMs: elapsedMillis(start),
 					})
 					continue
 				}
@@ -245,7 +256,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		allow:    func(t string) bool { return Allowed(principal.Key.MCP, name, t) },
 	}
 	p.passthrough(w, r, up, filter, func(status int, filtered bool) {
-		latencyMs := uint32(time.Since(start).Milliseconds())
+		latencyMs := elapsedMillis(start)
 		for _, m := range msgs {
 			tool, _, _ := ToolCall(m)
 			dec := "allowed"

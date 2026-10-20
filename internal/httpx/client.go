@@ -78,10 +78,9 @@ func New(opts ...Option) *http.Client {
 
 // limitReader wraps an io.Reader and returns ErrResponseTooLarge if more than limit bytes are read.
 type limitReader struct {
-	r      io.Reader
-	limit  int64
-	read   int64
-	closed bool
+	r     io.Reader
+	limit int64
+	read  int64
 }
 
 // LimitReader wraps r to read at most limit bytes. If the reader attempts to read beyond limit,

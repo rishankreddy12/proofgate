@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -70,8 +71,17 @@ func main() {
 				targetURL = "http://127.0.0.1:8080/healthz"
 			}
 		}
-		resp, err := http.Get(targetURL) //nolint:noctx
-		if err != nil || resp.StatusCode != 200 {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, targetURL, nil) //nolint:gosec // targetURL is explicit healthcheck configuration
+		if err != nil {
+			os.Exit(1)
+		}
+		resp, err := http.DefaultClient.Do(req) //nolint:gosec // targetURL is explicit healthcheck configuration
+		if err != nil {
+			os.Exit(1)
+		}
+		statusOK := resp.StatusCode == http.StatusOK
+		_ = resp.Body.Close()
+		if !statusOK {
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -82,6 +92,16 @@ func main() {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+func metricUint32(value int64) uint32 {
+	if value < 0 {
+		return 0
+	}
+	if uint64(value) > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(value)
 }
 
 func needsDBKeys(cfg *config.Config) bool {
@@ -224,7 +244,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 		}
 		usage.Emit(analytics.UsageEvent{TS: start, RequestID: uuid.NewString(), TenantID: tenant, Route: route,
 			Target: target.String(), Kind: "cache_embed", Status: telemetry.StatusOf(err), Cache: "none",
-			PromptTokens: uint32(u.PromptTokens), CostMicros: cost, LatencyMs: uint32(time.Since(start).Milliseconds())})
+			PromptTokens: metricUint32(int64(u.PromptTokens)), CostMicros: cost, LatencyMs: metricUint32(time.Since(start).Milliseconds())})
 		if err != nil {
 			return nil, err
 		}
@@ -311,7 +331,7 @@ func run(cfgPath string, scrubber *telemetry.Scrubber) error {
 			metrics.ObserveEmbed(ev.Route, ev.Target, telemetry.StatusOf(ev.Err), ev.Tokens, ev.CostMicros, ev.Duration)
 			usage.Emit(analytics.UsageEvent{TS: time.Now().Add(-ev.Duration), RequestID: uuid.NewString(), TenantID: ev.Principal.TenantID,
 				KeyID: ev.Principal.KeyID, Route: ev.Route, Target: ev.Target, Kind: "embeddings", Status: telemetry.StatusOf(ev.Err),
-				Cache: "none", PromptTokens: uint32(ev.Tokens), CostMicros: ev.CostMicros, LatencyMs: uint32(ev.Duration.Milliseconds())})
+				Cache: "none", PromptTokens: metricUint32(int64(ev.Tokens)), CostMicros: ev.CostMicros, LatencyMs: metricUint32(ev.Duration.Milliseconds())})
 		}}
 	mcpAudit := analytics.NewBatcher("mcp_calls", cfg.Analytics.MCPBatcher.Capacity, cfg.Analytics.MCPBatcher.BatchSize, cfg.Analytics.MCPBatcher.FlushInterval, analytics.InsertMCP(chConn),
 		func() { usageDropped.WithLabelValues("mcp_calls").Inc() })

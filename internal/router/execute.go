@@ -39,7 +39,7 @@ func backoff(base time.Duration, n int) time.Duration {
 	if ceiling <= 0 {
 		return 0
 	}
-	return time.Duration(rand.Int64N(int64(ceiling) + 1))
+	return time.Duration(rand.Int64N(int64(ceiling) + 1)) //nolint:gosec // retry jitter does not need cryptographic randomness
 }
 
 type decision int

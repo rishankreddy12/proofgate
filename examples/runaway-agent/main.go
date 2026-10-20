@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -21,9 +22,12 @@ type result struct {
 	Message         string `json:"message"`
 }
 
-func call(url, key, run string, msgs []map[string]any) (int, map[string]any) {
+func call(ctx context.Context, url, key, run string, msgs []map[string]any) (int, map[string]any) {
 	body, _ := json.Marshal(map[string]any{"model": "default", "max_tokens": 16, "messages": msgs})
-	req, _ := http.NewRequest("POST", url+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		log.Fatal(err)
+	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-ProofGate-Run-Id", run)
@@ -38,10 +42,10 @@ func call(url, key, run string, msgs []map[string]any) (int, map[string]any) {
 	return resp.StatusCode, out
 }
 
-func runScenario(name, url, key, run string, varyArgs bool) result {
+func runScenario(ctx context.Context, name, url, key, run string, varyArgs bool) result {
 	msgs := []map[string]any{{"role": "user", "content": "What is the weather in Pune?"}}
 	for step := 1; step <= 50; step++ {
-		status, out := call(url, key, run, msgs)
+		status, out := call(ctx, url, key, run, msgs)
 		if status != 200 {
 			e, _ := out["error"].(map[string]any)
 			return result{Scenario: name, StepsBeforeStop: step - 1, Status: status, Code: fmt.Sprint(e["code"]), Message: fmt.Sprint(e["message"])}
@@ -65,13 +69,14 @@ func main() {
 	budgetKey := flag.String("budget-key", os.Getenv("BUDGET_KEY"), "key with a small max_cost_usd")
 	out := flag.String("out", "bench/results/phase4/runaway-agent.json", "output")
 	flag.Parse()
+	ctx := context.Background()
 	res := []result{
-		runScenario("identical tool call every step", *url, *loopKey, "demo-loop", false),
-		runScenario("new arguments every step until the budget ends", *url, *budgetKey, "demo-budget", true),
+		runScenario(ctx, "identical tool call every step", *url, *loopKey, "demo-loop", false),
+		runScenario(ctx, "new arguments every step until the budget ends", *url, *budgetKey, "demo-budget", true),
 	}
 	b, _ := json.MarshalIndent(res, "", "  ")
 	fmt.Println(string(b))
-	if err := os.WriteFile(*out, append(b, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(*out, append(b, '\n'), 0o600); err != nil { //nolint:gosec // output is an intentional operator-selected local path
 		log.Fatal(err)
 	}
 }

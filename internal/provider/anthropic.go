@@ -297,7 +297,8 @@ func (p *Anthropic) ChatStream(ctx context.Context, model string, req *api.ChatR
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	resp, err := p.post(ctx, body)
+	// The returned stream owns resp.Body and closes it from Stream.Close.
+	resp, err := p.post(ctx, body) //nolint:bodyclose // ownership transfers to anthropicStream
 	if err != nil {
 		cancel()
 		return nil, err

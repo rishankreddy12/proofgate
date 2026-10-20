@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,9 +16,12 @@ import (
 	"time"
 )
 
-func setMode(admin, mode string) {
-	req, _ := http.NewRequest("PUT", admin+"/admin/mode", strings.NewReader(mode))
-	resp, err := http.DefaultClient.Do(req)
+func setMode(ctx context.Context, admin, mode string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, admin+"/admin/mode", strings.NewReader(mode)) //nolint:gosec // benchmark endpoint is an explicit operator-supplied target
+	if err != nil {
+		log.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // benchmark endpoint is an explicit operator-supplied target
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -50,6 +54,7 @@ func main() {
 	flag.Parse()
 
 	client := &http.Client{Timeout: 30 * time.Second}
+	ctx := context.Background()
 	var mu sync.Mutex
 	var obs []Obs
 	start := time.Now()
@@ -64,7 +69,7 @@ func main() {
 			break
 		}
 		if !switched && el >= *before {
-			setMode(*mockAdmin, fmt.Sprintf(`{"ttft_ms":%d}`, *slow))
+			setMode(ctx, *mockAdmin, fmt.Sprintf(`{"ttft_ms":%d}`, *slow))
 			switched = true
 		}
 		wg.Add(1)
@@ -72,11 +77,14 @@ func main() {
 			defer wg.Done()
 			body, _ := json.Marshal(map[string]any{"model": *route, "stream": true, "max_tokens": 5,
 				"messages": []map[string]string{{"role": "user", "content": "hi"}}})
-			req, _ := http.NewRequest("POST", *url+"/v1/chat/completions", bytes.NewReader(body))
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, *url+"/v1/chat/completions", bytes.NewReader(body)) //nolint:gosec // benchmark endpoint is an explicit operator-supplied target
+			if err != nil {
+				return
+			}
 			req.Header.Set("Authorization", "Bearer "+*key)
 			req.Header.Set("Content-Type", "application/json")
 			t0 := time.Now()
-			resp, err := client.Do(req)
+			resp, err := client.Do(req) //nolint:gosec // benchmark endpoint is an explicit operator-supplied target
 			o := Obs{At: at}
 			if err == nil {
 				o.Status, o.Target = resp.StatusCode, resp.Header.Get("X-ProofGate-Target")
@@ -91,7 +99,7 @@ func main() {
 		}(el)
 	}
 	wg.Wait()
-	setMode(*mockAdmin, `{}`)
+	setMode(ctx, *mockAdmin, `{}`)
 
 	fo, ok := FailoverTime(obs, *before, *healthy, 0.95, time.Second)
 	var pre, mid, post []time.Duration
@@ -117,7 +125,7 @@ func main() {
 	b, _ := json.MarshalIndent(res, "", "  ")
 	fmt.Println(string(b))
 	if *out != "" {
-		if err := os.WriteFile(*out, append(b, '\n'), 0o644); err != nil {
+		if err := os.WriteFile(*out, append(b, '\n'), 0o600); err != nil {
 			log.Fatal(err)
 		}
 	}

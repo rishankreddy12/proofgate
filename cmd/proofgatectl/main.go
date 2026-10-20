@@ -343,7 +343,7 @@ func main() {
 			}
 		}
 		if *mcpPolicyPath != "" {
-			b, err := os.ReadFile(*mcpPolicyPath)
+			b, err := os.ReadFile(*mcpPolicyPath) //nolint:gosec // the operator deliberately selects this local policy file
 			if err != nil {
 				die("read mcp policy: %v", err)
 			}

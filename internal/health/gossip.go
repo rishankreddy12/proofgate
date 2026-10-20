@@ -3,6 +3,7 @@ package health
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,8 +25,8 @@ import (
 // It allows disparate Gateway nodes in a cluster to instantly share awareness of provider degradations
 // (e.g., Azure OpenAI goes down) without requiring a centralized coordinator or Redis backbone.
 type Gossip struct {
-	addr     string
-	peers    []string
+	addr          string
+	peers         []string
 	tracker       *Tracker
 	interval      time.Duration
 	secret        string
@@ -173,9 +174,12 @@ func (g *Gossip) isAllowedPeer(addr *net.UDPAddr) bool {
 				return true
 			}
 		} else {
-			if ips, err := net.LookupIP(host); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			cancel()
+			if err == nil {
 				for _, ip := range ips {
-					if ip.Equal(incomingIP) {
+					if ip.IP.Equal(incomingIP) {
 						return true
 					}
 				}
@@ -274,7 +278,7 @@ func (g *Gossip) BroadcastOnce() error {
 	if g.secret != "" {
 		now := time.Now().Unix()
 		mac := hmac.New(sha256.New, []byte(g.secret))
-		mac.Write([]byte(fmt.Sprintf("%d\n", now)))
+		_, _ = fmt.Fprintf(mac, "%d\n", now)
 		mac.Write(payload)
 		sig := hex.EncodeToString(mac.Sum(nil))
 		header := fmt.Sprintf("SIG|%d|%s\n", now, sig)
@@ -335,7 +339,7 @@ func (g *Gossip) MergeMessage(data []byte) error {
 			return fmt.Errorf("gossip: timestamp skew too large (%d s)", diff)
 		}
 		expectedMac := hmac.New(sha256.New, []byte(g.secret))
-		expectedMac.Write([]byte(fmt.Sprintf("%d\n", ts)))
+		_, _ = fmt.Fprintf(expectedMac, "%d\n", ts)
 		expectedMac.Write(raw[nlIdx+1:])
 		expectedSig := expectedMac.Sum(nil)
 		actualSig, err := hex.DecodeString(parts[2])

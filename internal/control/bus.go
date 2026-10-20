@@ -35,7 +35,7 @@ const (
 	OpKeyRevoked = "key_revoked"
 	// OpCredentialInvalidated tells replicas to evict one provider's decrypted
 	// credential without carrying the credential itself.
-	OpCredentialInvalidated = "credential_invalidated"
+	OpCredentialInvalidated = "credential_invalidated" //nolint:gosec // protocol operation identifier; it carries no credential
 	// OpTenantErased tells replicas to drop tenant-scoped in-memory state.
 	OpTenantErased = "tenant_erased"
 )

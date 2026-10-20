@@ -8,6 +8,16 @@ import (
 	"github.com/proofgate/proofgate/internal/mcpproxy"
 )
 
+func clampU16(n int) uint16 {
+	if n < 0 {
+		return 0
+	}
+	if n > int(^uint16(0)) {
+		return ^uint16(0)
+	}
+	return uint16(n)
+}
+
 // InsertMCP executes the primary logic for the InsertMCP operation.
 // It ensures thread-safe execution, input validation, and proper error handling.
 func InsertMCP(conn driver.Conn) func(context.Context, []mcpproxy.Audit) error {
@@ -17,7 +27,7 @@ func InsertMCP(conn driver.Conn) func(context.Context, []mcpproxy.Audit) error {
 			return err
 		}
 		for _, a := range rows {
-			if err := b.Append(a.TS, a.TenantID, a.KeyID, a.Server, a.Method, a.Tool, a.RunID, a.Decision, uint16(a.Status), a.LatencyMs); err != nil {
+			if err := b.Append(a.TS, a.TenantID, a.KeyID, a.Server, a.Method, a.Tool, a.RunID, a.Decision, clampU16(a.Status), a.LatencyMs); err != nil {
 				return err
 			}
 		}

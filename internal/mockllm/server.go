@@ -73,7 +73,9 @@ func (s *Server) Handler() http.Handler {
 func writeErr(w http.ResponseWriter, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `{"error":{"message":"mock error %d","type":"mock","code":"mock_%d"}}`, status, status)
+	// status is formatted as decimal JSON under an application/json content type;
+	// it cannot introduce HTML or script content.
+	_, _ = fmt.Fprintf(w, `{"error":{"message":"mock error %d","type":"mock","code":"mock_%d"}}`, status, status) //nolint:gosec // verified false positive: numeric-only JSON fields
 }
 
 func (s *Server) failStatus(r *http.Request, m Mode) int {
@@ -81,7 +83,7 @@ func (s *Server) failStatus(r *http.Request, m Mode) int {
 		n, _ := strconv.Atoi(v)
 		return n
 	}
-	if m.ErrorRate > 0 && rand.Float64() < m.ErrorRate {
+	if m.ErrorRate > 0 && rand.Float64() < m.ErrorRate { //nolint:gosec // mock fault injection does not need cryptographic randomness
 		if m.ErrorStatus == 0 {
 			return 500
 		}

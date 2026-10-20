@@ -986,13 +986,14 @@ func (c *Config) validate() error {
 			continue
 		}
 		hostname := u.Hostname()
-		if u.Scheme == "https" {
+		switch u.Scheme {
+		case "https":
 			// ok
-		} else if u.Scheme == "http" {
+		case "http":
 			if hostname != "localhost" && !strings.HasSuffix(hostname, ".local") && !insecure[hostname] {
 				errs = append(errs, fmt.Errorf("mcp server %q: url must be https (http allowed only for localhost, .local or mcp_insecure_hosts)", s.Name))
 			}
-		} else {
+		default:
 			errs = append(errs, fmt.Errorf("mcp server %q: url must have https or http scheme", s.Name))
 		}
 	}

@@ -96,7 +96,7 @@ func resolveRoute(rt *Runtime, p auth.Principal, model string, embeddings bool) 
 	if err != nil {
 		return nil, err
 	}
-	if !p.CanUseRoute(route.Name) && !(p.AllowDirect && len(route.Targets) == 1 && route.Name == route.Targets[0].String()) {
+	if !p.CanUseRoute(route.Name) && (!p.AllowDirect || len(route.Targets) != 1 || route.Name != route.Targets[0].String()) {
 		return nil, api.Forbidden("route_forbidden", "this key may not use route "+route.Name)
 	}
 	if route.Embeddings != embeddings && route.Name != route.Targets[0].String() {

@@ -36,7 +36,7 @@ func Redact(text string, matches []PIIMatch, mode string, n ...Numberer) RedactR
 			b.WriteString(text[lastIdx:m.Start])
 		}
 		if mode == "mask" {
-			b.WriteString(fmt.Sprintf("[REDACTED:%s]", m.Type))
+			_, _ = fmt.Fprintf(&b, "[REDACTED:%s]", m.Type)
 		} else {
 			counts[m.Type]++
 			placeholder := fmt.Sprintf("<%s_%d>", m.Type, counts[m.Type])

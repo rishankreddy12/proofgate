@@ -22,7 +22,7 @@ func FromConfigWithOptions(kind, localFile, vaultAddr, vaultKey, vaultAuth, vaul
 		case "kubernetes":
 			tokenPath := vaultTokenFile
 			if tokenPath == "" {
-				tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+				tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" //nolint:gosec // standard Kubernetes token mount path, not a secret value
 			}
 			ts = KubernetesAuth(vaultAddr, vaultRole, tokenPath, nil)
 		default:
@@ -40,7 +40,7 @@ func NewDynamicVaultResolverFromConfig(vaultAddr, vaultAuth, vaultRole, vaultTok
 	case "kubernetes":
 		tokenPath := vaultTokenFile
 		if tokenPath == "" {
-			tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+			tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" //nolint:gosec // standard Kubernetes token mount path, not a secret value
 		}
 		ts = KubernetesAuth(vaultAddr, vaultRole, tokenPath, nil)
 	default:

@@ -161,7 +161,7 @@ func runExport(ctx context.Context, args []string) {
 		if *outFile == "-" || *outFile == "" {
 			fmt.Print(string(b))
 		} else {
-			if err := os.WriteFile(*outFile, b, 0o644); err != nil {
+			if err := os.WriteFile(*outFile, b, 0o600); err != nil {
 				die("write %s: %v", *outFile, err)
 			}
 			fmt.Fprintf(os.Stderr, "Exported redacted config snapshot to %s\n", *outFile)

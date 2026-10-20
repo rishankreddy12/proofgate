@@ -115,7 +115,8 @@ func (p *OpenAI) Chat(ctx context.Context, model string, req *api.ChatRequest) (
 // ChatStream executes a streaming completion request, parsing the upstream Server-Sent Events.
 func (p *OpenAI) ChatStream(ctx context.Context, model string, req *api.ChatRequest) (Stream, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	resp, err := p.post(ctx, "/chat/completions", withModel(req, model, true))
+	// The returned stream owns resp.Body and closes it from Stream.Close.
+	resp, err := p.post(ctx, "/chat/completions", withModel(req, model, true)) //nolint:bodyclose // ownership transfers to openAIStream
 	if err != nil {
 		cancel()
 		return nil, err

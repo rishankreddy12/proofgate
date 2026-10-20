@@ -249,7 +249,7 @@ func storable(r *api.ChatResponse) bool {
 
 // After executes post-generation. If the request was a cache miss and generated successfully,
 // it dispatches an asynchronous worker to write the payload to Redis.
-func (s *Stage) After(_ context.Context, c *pipeline.Call) {
+func (s *Stage) After(ctx context.Context, c *pipeline.Call) {
 	st, ok := c.Values[StateKey].(*State)
 	if !ok || c.Err != nil {
 		return
@@ -298,7 +298,7 @@ func (s *Stage) After(_ context.Context, c *pipeline.Call) {
 	tenant, route := c.Principal.TenantID, c.Route.Name
 	go func() {
 		defer func() { <-s.slots; s.wg.Done() }()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if st.ExactKey != "" && s.exact != nil {
 			if err := s.exact.Put(ctx, tenant, st.ExactKey, e, cfg.TTL); err != nil {

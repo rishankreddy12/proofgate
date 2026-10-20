@@ -17,7 +17,7 @@ func BootstrapMeanCI(x []float64, iters int, alpha float64, seed uint64) (mean, 
 		mean += v
 	}
 	mean /= float64(n)
-	r := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+	r := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)) //nolint:gosec // seeded pseudo-randomness is required for reproducible bootstrap estimates
 	means := make([]float64, iters)
 	for i := range means {
 		s := 0.0

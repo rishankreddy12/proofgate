@@ -322,7 +322,8 @@ func (p *Gemini) ChatStream(ctx context.Context, model string, req *api.ChatRequ
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	resp, err := p.post(ctx, "/v1beta/models/"+model+":streamGenerateContent?alt=sse", body)
+	// The returned stream owns resp.Body and closes it from Stream.Close.
+	resp, err := p.post(ctx, "/v1beta/models/"+model+":streamGenerateContent?alt=sse", body) //nolint:bodyclose // ownership transfers to geminiStream
 	if err != nil {
 		cancel()
 		return nil, err

@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -85,14 +86,17 @@ func main() {
 			"max_tokens": *maxTokens,
 			"messages":   []map[string]string{{"role": "user", "content": fmt.Sprintf("%s #%d", filler, n)}},
 		})
-		req, _ := http.NewRequest("POST", *url+"/v1/chat/completions", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, *url+"/v1/chat/completions", bytes.NewReader(body)) //nolint:gosec // benchmark endpoint is an explicit operator-supplied target
+		if err != nil {
+			return
+		}
 		req.Header.Set("Content-Type", "application/json")
 		if *key != "" {
 			req.Header.Set("Authorization", "Bearer "+*key)
 		}
 		t0 := time.Now()
 		r := Record{Start: at}
-		resp, err := client.Do(req)
+		resp, err := client.Do(req) //nolint:gosec // benchmark endpoint is an explicit operator-supplied target
 		if err == nil {
 			r.Status = resp.StatusCode
 			r.Target = resp.Header.Get("X-ProofGate-Target")
@@ -137,7 +141,7 @@ func main() {
 	}
 
 	if _, ok := meta["commit"]; !ok {
-		if b, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output(); err == nil {
+		if b, err := exec.CommandContext(context.Background(), "git", "rev-parse", "--short", "HEAD").Output(); err == nil {
 			meta["commit"] = strings.TrimSpace(string(b))
 		}
 	}
@@ -150,7 +154,7 @@ func main() {
 	b, _ := json.MarshalIndent(s, "", "  ")
 	fmt.Println(string(b))
 	if *out != "" {
-		if err := os.WriteFile(*out, append(b, '\n'), 0o644); err != nil {
+		if err := os.WriteFile(*out, append(b, '\n'), 0o600); err != nil { //nolint:gosec // output is an intentional operator-selected local path
 			log.Fatal(err)
 		}
 	}

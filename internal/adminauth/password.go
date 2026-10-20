@@ -27,6 +27,12 @@ var BreachedChecker BreachedPasswordChecker
 
 // ValidatePassword validates password complexity and security constraints.
 func ValidatePassword(password, username string) error {
+	return ValidatePasswordContext(context.Background(), password, username)
+}
+
+// ValidatePasswordContext validates password complexity and security constraints
+// while preserving the caller's context for optional breach checks.
+func ValidatePasswordContext(ctx context.Context, password, username string) error {
 	if utf8.RuneCountInString(password) < 12 {
 		return ErrPasswordTooShort
 	}
@@ -38,7 +44,7 @@ func ValidatePassword(password, username string) error {
 			return ErrPasswordEqualsUsername
 		}
 	}
-	if BreachedChecker != nil && BreachedChecker(context.Background(), password) {
+	if BreachedChecker != nil && BreachedChecker(ctx, password) {
 		return ErrPasswordBreached
 	}
 	return nil

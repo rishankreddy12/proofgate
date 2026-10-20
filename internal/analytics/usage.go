@@ -35,6 +35,16 @@ func clampU32(d int64) uint32 {
 	return uint32(d)
 }
 
+func clampU8(n int) uint8 {
+	if n < 0 {
+		return 0
+	}
+	if n > int(^uint8(0)) {
+		return ^uint8(0)
+	}
+	return uint8(n)
+}
+
 // EventFromCall executes the primary logic for the EventFromCall operation.
 // It ensures thread-safe execution, input validation, and proper error handling.
 func EventFromCall(c *pipeline.Call) UsageEvent {
@@ -44,7 +54,7 @@ func EventFromCall(c *pipeline.Call) UsageEvent {
 	}
 	e := UsageEvent{TS: c.Start, RequestID: c.ID, TenantID: c.Principal.TenantID, KeyID: c.Principal.KeyID,
 		Kind: kind, Status: telemetry.StatusOf(c.Err), Cache: c.CacheStatus, Stream: c.Stream,
-		Attempts: uint8(min(c.Attempts, 255)), PromptTokens: clampU32(int64(c.Usage.PromptTokens)),
+		Attempts: clampU8(c.Attempts), PromptTokens: clampU32(int64(c.Usage.PromptTokens)),
 		CompletionTokens: clampU32(int64(c.Usage.CompletionTokens)), CachedTokens: clampU32(int64(c.Usage.CachedTokens())),
 		CostMicros: c.CostMicros, LatencyMs: clampU32(c.Latency.Milliseconds()), TTFTMs: clampU32(c.TTFT.Milliseconds())}
 	if c.Route != nil {
