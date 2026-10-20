@@ -44,5 +44,5 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker build -f deploy/Dockerfile -t proofgate:ci .
       - run: bash scripts/check_image.sh proofgate:ci
-      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with: {image-ref: "proofgate:ci", severity: "HIGH,CRITICAL", ignore-unfixed: true, exit-code: "1"}
