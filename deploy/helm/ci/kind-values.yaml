@@ -13,6 +13,14 @@ resources:
     cpu: 100m
     memory: 128Mi
 
+env:
+  - name: DATABASE_URL
+    value: postgres://proofgate:proofgate@postgres:5432/proofgate?sslmode=disable
+  - name: REDIS_URL
+    value: redis://redis:6379/0
+  - name: CLICKHOUSE_DSN
+    value: clickhouse://proofgate:proofgate@clickhouse:9000/proofgate
+
 networkPolicy:
   enabled: false
 
@@ -23,6 +31,8 @@ config: |
   server:
     addr: ":8080"
     admin_addr: "0.0.0.0:9090"
+  admin_auth:
+    enabled: true
   secrets:
     kek: local
     local_kek_file: /run/secrets/local_kek
